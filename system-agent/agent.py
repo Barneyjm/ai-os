@@ -21,6 +21,7 @@ import aiohttp
 from aiohttp import web, UnixConnector
 
 from policy import AgencyPolicy, AgencyLevel, Action, PolicyDecision
+from events import EventManager, EventType, Event, EventTrigger, AgentEventHandler
 
 # =============================================================================
 # Configuration
@@ -752,7 +753,81 @@ class SystemAgent:
 
         self.pending_notifications: dict[str, list] = {}
 
+        # Event system for proactive triggers
+        self.event_manager = EventManager()
+        self._setup_event_system()
+
         self.logger.info(f"Using {config.inference_backend} backend with model {config.model_name}")
+
+    def _setup_event_system(self):
+        """Initialize the event system with triggers from config."""
+        # Load triggers from policy config if available
+        if self.policy.config:
+            self.event_manager.load_triggers_from_config(self.policy.config)
+
+        # Add handler that routes events to the agent
+        handler = AgentEventHandler(self._handle_event)
+        self.event_manager.add_handler(handler)
+
+    async def _handle_event(self, prompt: str, event: Event) -> dict:
+        """Handle an event by processing it as an agent message."""
+        # Use a dedicated session for event-triggered actions
+        session_id = f"event:{event.trigger_id or 'unknown'}"
+
+        # Get the trigger to check auto_approve setting
+        trigger = self.event_manager.triggers.get(event.trigger_id)
+
+        async def event_confirm(action: Action, decision: PolicyDecision) -> bool:
+            # If trigger has auto_approve, skip confirmation
+            if trigger and trigger.auto_approve:
+                return True
+            # Otherwise, log and deny (events can't get interactive confirmation)
+            self.logger.info(f"Event action requires confirmation (denied): {action.description}")
+            return False
+
+        def event_notify(action: Action, msg: str):
+            self.logger.info(f"Event notification: {msg}")
+            self.pending_notifications.setdefault("events", []).append({
+                "action": action.description,
+                "message": msg,
+                "event_type": event.event_type.value,
+                "timestamp": datetime.now().isoformat()
+            })
+
+        result = await self.process_message(
+            session_id=session_id,
+            user_message=prompt,
+            confirm_callback=event_confirm,
+            notify_callback=event_notify
+        )
+
+        return result
+
+    async def start_event_system(self):
+        """Start the event monitoring system."""
+        await self.event_manager.start()
+        self.logger.info("Event system started")
+
+    async def stop_event_system(self):
+        """Stop the event monitoring system."""
+        await self.event_manager.stop()
+        self.logger.info("Event system stopped")
+
+    def get_event_status(self) -> dict:
+        """Get the current status of the event system."""
+        return self.event_manager.get_status()
+
+    def register_event_trigger(self, trigger: EventTrigger):
+        """Register a new event trigger at runtime."""
+        self.event_manager.register_trigger(trigger)
+
+    def unregister_event_trigger(self, trigger_id: str):
+        """Remove an event trigger."""
+        self.event_manager.unregister_trigger(trigger_id)
+
+    async def emit_event(self, event: Event):
+        """Manually emit an event to trigger handlers."""
+        await self.event_manager.emit(event)
 
     def _get_system_prompt(self) -> str:
         profile_info = ""
@@ -977,8 +1052,36 @@ async def create_ipc_server(agent: SystemAgent, socket_path: str):
         return web.json_response({
             "status": "healthy",
             "active_profile": agent.policy.active_profile,
-            "active_sessions": len(agent.conversations)
+            "active_sessions": len(agent.conversations),
+            "events_running": agent.event_manager.running
         })
+
+    async def handle_events_status(request: web.Request) -> web.Response:
+        return web.json_response(agent.get_event_status())
+
+    async def handle_events_enable(request: web.Request) -> web.Response:
+        data = await request.json()
+        trigger_id = data.get("id")
+        if not trigger_id:
+            return web.json_response({"success": False, "error": "No trigger ID specified"}, status=400)
+
+        if trigger_id not in agent.event_manager.triggers:
+            return web.json_response({"success": False, "error": f"Unknown trigger: {trigger_id}"}, status=404)
+
+        agent.event_manager.triggers[trigger_id].enabled = True
+        return web.json_response({"success": True, "trigger": trigger_id, "enabled": True})
+
+    async def handle_events_disable(request: web.Request) -> web.Response:
+        data = await request.json()
+        trigger_id = data.get("id")
+        if not trigger_id:
+            return web.json_response({"success": False, "error": "No trigger ID specified"}, status=400)
+
+        if trigger_id not in agent.event_manager.triggers:
+            return web.json_response({"success": False, "error": f"Unknown trigger: {trigger_id}"}, status=404)
+
+        agent.event_manager.triggers[trigger_id].enabled = False
+        return web.json_response({"success": True, "trigger": trigger_id, "enabled": False})
 
     app = web.Application()
     app.router.add_post("/chat", handle_chat)
@@ -987,6 +1090,9 @@ async def create_ipc_server(agent: SystemAgent, socket_path: str):
     app.router.add_post("/policy/check", handle_policy_check)
     app.router.add_get("/policy/suggestions", handle_policy_suggestions)
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/events", handle_events_status)
+    app.router.add_post("/events/trigger/enable", handle_events_enable)
+    app.router.add_post("/events/trigger/disable", handle_events_disable)
 
     if os.path.exists(socket_path):
         os.unlink(socket_path)

@@ -236,3 +236,99 @@ no_auto_learn = [
     "system.shutdown",
     "system.reboot",
 ]
+
+# =============================================================================
+# Event System - Proactive Triggers
+# =============================================================================
+
+[events]
+# Global enable/disable for the event system
+enabled = true
+
+# Default cooldown between triggers of the same type (seconds)
+default_cooldown = 60
+
+# Maximum events to process per minute (rate limiting)
+max_events_per_minute = 30
+
+# =============================================================================
+# Event Triggers
+# =============================================================================
+
+# Example: Watch Downloads folder for new files
+[[events.triggers]]
+id = "downloads-organizer"
+enabled = false  # Enable when ready
+event_types = ["file_created"]
+watch_path = "~/Downloads"
+file_patterns = ["*"]
+ignore_patterns = [".*", "*.part", "*.crdownload", "*.tmp"]
+cooldown_seconds = 30
+prompt = "A new file was downloaded. Analyze it and suggest where to organize it based on file type and content."
+
+# Example: Watch for new screenshots
+[[events.triggers]]
+id = "screenshot-handler"
+enabled = false
+event_types = ["file_created"]
+watch_path = "~/Pictures/Screenshots"
+file_patterns = ["*.png", "*.jpg", "*.jpeg"]
+cooldown_seconds = 5
+prompt = "A new screenshot was taken. Would you like me to: 1) OCR any text in it, 2) Rename it descriptively, 3) Move it to a project folder?"
+
+# Example: Watch config files for changes
+[[events.triggers]]
+id = "config-backup"
+enabled = false
+event_types = ["file_modified"]
+watch_path = "~/.config"
+file_patterns = ["*.conf", "*.toml", "*.yaml", "*.yml", "*.json"]
+recursive = true
+cooldown_seconds = 300
+prompt = "A configuration file was modified. Should I create a backup or commit it to your dotfiles repo?"
+
+# Example: Daily system health check
+[[events.triggers]]
+id = "daily-health-check"
+enabled = false
+event_types = ["schedule"]
+schedule = "@daily"
+prompt = "Perform a daily system health check: disk usage, failed services, security updates available, and any anomalies in logs."
+
+# Example: Hourly git status for active projects
+[[events.triggers]]
+id = "git-reminder"
+enabled = false
+event_types = ["schedule"]
+schedule = "@hourly"
+prompt = "Check git status for projects in ~/code. If there are uncommitted changes older than 2 hours, remind me."
+
+# Example: Low disk space warning
+[[events.triggers]]
+id = "disk-space-monitor"
+enabled = false
+event_types = ["low_disk_space"]
+watch_path = "/"
+threshold = 90.0
+cooldown_seconds = 3600
+prompt = "Disk space is critically low. Analyze disk usage and suggest files/directories that could be cleaned up safely."
+
+# Example: High memory usage
+[[events.triggers]]
+id = "memory-monitor"
+enabled = false
+event_types = ["high_memory"]
+threshold = 85.0
+cooldown_seconds = 300
+prompt = "Memory usage is high. List the top memory-consuming processes and suggest which ones could be safely terminated or restarted."
+
+# Example: Watch for new log errors
+[[events.triggers]]
+id = "error-log-monitor"
+enabled = false
+event_types = ["file_modified"]
+watch_path = "/var/log"
+file_patterns = ["*.log", "*.err"]
+cooldown_seconds = 60
+prompt = "New entries appeared in system logs. Check for errors or warnings and summarize any issues that need attention."
+

@@ -13,16 +13,18 @@ ai-os/
 ├── system-agent/           # Core AI agent
 │   ├── agent.py            # Main agent, tools, inference clients
 │   ├── policy.py           # Agency policy system
+│   ├── events.py           # Event system for proactive triggers
 │   └── requirements.txt
 ├── ai-shell/               # Terminal interface
 │   ├── shell.py            # Conversational shell
 │   └── requirements.txt
 ├── config/
-│   └── agency.toml         # Agency policy configuration
+│   └── agency.toml         # Agency policy + event trigger configuration
 ├── tests/                  # Test suite
 │   ├── conftest.py         # Shared fixtures
 │   ├── test_policy.py      # Policy module tests
 │   ├── test_agent.py       # Agent module tests
+│   ├── test_events.py      # Event system tests
 │   └── test_shell.py       # Shell module tests
 ├── services/               # runit service definitions
 ├── docs/                   # Documentation
@@ -51,10 +53,19 @@ Controls AI autonomy across domains:
 - **AnthropicInferenceClient**: Anthropic Messages API client
 - **SystemAgent**: Main agent orchestrating tools and policy
 
+### Event System (`system-agent/events.py`)
+
+Provides proactive agency through automatic triggers:
+- **EventType**: FILE_CREATED, FILE_MODIFIED, SCHEDULE, LOW_DISK_SPACE, etc.
+- **Event**: Represents something that happened with timestamp and data
+- **EventTrigger**: Defines when to fire (file patterns, schedules, thresholds)
+- **EventManager**: Coordinates file watchers, schedulers, and system monitors
+- **AgentEventHandler**: Routes events to the SystemAgent for processing
+
 ### AI Shell (`ai-shell/shell.py`)
 
 - **AgentClient**: HTTP/Unix socket client to agent
-- **Builtin commands**: /help, /profile, /policy, /reset, /exit
+- **Builtin commands**: /help, /profile, /policy, /events, /reset, /exit
 
 ## Development Setup
 
@@ -255,6 +266,55 @@ def test_get_policy_new_domain(self, temp_config_file):
     assert decision.level == AgencyLevel.AUTO
 ```
 
+### Adding Event Triggers
+
+Event triggers enable proactive AI behavior. Add them to `config/agency.toml`:
+
+**File Watcher Trigger**:
+```toml
+[[events.triggers]]
+id = "downloads-organizer"
+enabled = true
+event_types = ["file_created"]
+watch_path = "~/Downloads"
+file_patterns = ["*.pdf", "*.zip"]
+ignore_patterns = [".*", "*.tmp"]
+cooldown_seconds = 30
+prompt = "A new file was downloaded. Suggest where to organize it."
+```
+
+**Scheduled Trigger**:
+```toml
+[[events.triggers]]
+id = "daily-summary"
+enabled = true
+event_types = ["schedule"]
+schedule = "@daily"  # or "0 9 * * *" for 9am, "@every_5m", etc.
+prompt = "Provide a daily system health summary."
+```
+
+**System Monitor Trigger**:
+```toml
+[[events.triggers]]
+id = "disk-warning"
+enabled = true
+event_types = ["low_disk_space"]
+watch_path = "/"
+threshold = 90.0  # Trigger when >90% used
+cooldown_seconds = 3600
+prompt = "Disk space is low. Suggest cleanup actions."
+```
+
+**Schedule Syntax**:
+- `@daily`, `@hourly`, `@weekly`, `@monthly`
+- `@every_5m`, `@every_1h`, `@every_30s`
+- Cron: `*/5 * * * *` (every 5 minutes)
+
+**Shell Commands**:
+- `/events` - Show event system status and triggers
+- `/events enable ID` - Enable a trigger
+- `/events disable ID` - Disable a trigger
+
 ## CI/CD Pipeline
 
 GitHub Actions runs on push/PR to main:
@@ -301,6 +361,28 @@ User Input → AI Shell → System Agent → Inference Client → LLM
          Tool Execution (if approved)
                 ↓
          Response → AI Shell → User
+```
+
+### Event System Flow
+```
+                    ┌─────────────────┐
+                    │  Event Manager  │
+                    └────────┬────────┘
+         ┌──────────────────┼──────────────────┐
+         ▼                  ▼                  ▼
+   File Watcher        Scheduler        System Monitor
+   (watchdog)       (cron-like)       (CPU/mem/disk)
+         │                  │                  │
+         └──────────────────┼──────────────────┘
+                            ▼
+                      Event Queue
+                            ▼
+                   AgentEventHandler
+                            ▼
+                     SystemAgent
+                   (process_message)
+                            ▼
+                    LLM + Tool Use
 ```
 
 ### Tool Schema Formats

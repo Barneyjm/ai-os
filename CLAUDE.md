@@ -498,3 +498,12 @@ AI-OS is well-suited for headless systems (Raspberry Pi, servers, appliances):
 - Observe repeated manual actions
 - Suggest automation for common patterns
 - Create new triggers based on user behavior
+
+### Expanded Tool Library (Runbook-Inspired)
+See `docs/devops-comparison.md` for full roadmap. Priority additions:
+- **User management**: user_create, ssh_key_add, sudo_grant
+- **Network/Firewall**: firewall_allow, firewall_deny, port_check
+- **Logs**: log_tail, log_search, journal_query
+- **Resources**: memory_clear_cache, disk_cleanup, process_nice
+- **Security**: permission_check, updates_check, fail2ban_status
+- **Containers**: container_list, container_restart, container_logs

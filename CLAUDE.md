@@ -406,21 +406,22 @@ User Input → AI Shell → System Agent → Inference Client → LLM
                     ┌─────────────────┐
                     │  Event Manager  │
                     └────────┬────────┘
-         ┌──────────────────┼──────────────────┐
-         ▼                  ▼                  ▼
-   File Watcher        Scheduler        System Monitor
-   (watchdog)       (cron-like)       (CPU/mem/disk)
-         │                  │                  │
-         └──────────────────┼──────────────────┘
-                            ▼
-                      Event Queue
-                            ▼
-                   AgentEventHandler
-                            ▼
-                     SystemAgent
-                   (process_message)
-                            ▼
-                    LLM + Tool Use
+         ┌──────────┬────────┼────────┬──────────┐
+         ▼          ▼        ▼        ▼          ▼
+   File Watcher  Scheduler  System   Peripheral
+   (watchdog)   (cron-like) Monitor   Monitor
+                           (CPU/mem) (USB/net/power)
+         │          │        │        │
+         └──────────┴────────┼────────┘
+                             ▼
+                       Event Queue
+                             ▼
+                    AgentEventHandler
+                             ▼
+                      SystemAgent
+                    (process_message)
+                             ▼
+                     LLM + Tool Use
 ```
 
 ### Tool Schema Formats
@@ -465,3 +466,35 @@ All inference clients return OpenAI-compatible responses:
 ```
 
 This allows the SystemAgent to work with any backend uniformly.
+
+## Future Enhancements
+
+### Event-Driven Peripheral Monitoring
+Current peripheral monitoring uses polling (2s interval). Future versions could add event-driven backends:
+- **pyudev**: Netlink-based USB/device events (instant, no polling)
+- **pyroute2**: RTNETLINK for network interface events
+- **D-Bus**: UPower (battery), NetworkManager, BlueZ (Bluetooth)
+- **acpid**: Power button, lid close, AC plug events
+
+### Headless/IoT Deployment
+AI-OS is well-suited for headless systems (Raspberry Pi, servers, appliances):
+- Remote inference via API (Fireworks, OpenAI, Anthropic)
+- Lightweight local footprint (agent + tools only)
+- Proactive management without human intervention
+- Policy-controlled autonomy levels
+
+**Example use cases**:
+- Home server: Auto-restart services, manage backups, intrusion alerts
+- Media center: Organize downloads, transcode when idle
+- Network appliance: React to devices, manage firewall rules
+- IoT hub: Process sensor data, alert on anomalies, rotate storage
+
+### Persistent Memory
+- Remember user preferences across sessions
+- Learn from past actions and outcomes
+- Build context about the system over time
+
+### Workflow Learning
+- Observe repeated manual actions
+- Suggest automation for common patterns
+- Create new triggers based on user behavior

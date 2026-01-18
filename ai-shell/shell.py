@@ -105,6 +105,15 @@ class AgentClient:
     async def disable_trigger(self, trigger_id: str) -> dict:
         return await self._request("POST", "/events/trigger/disable", {"id": trigger_id})
 
+    async def get_audit_summary(self, hours: int = 24) -> dict:
+        return await self._request("GET", f"/audit/summary?hours={hours}")
+
+    async def get_audit_entries(self, count: int = 50, action_filter: str = None) -> dict:
+        url = f"/audit/entries?count={count}"
+        if action_filter:
+            url += f"&filter={action_filter}"
+        return await self._request("GET", url)
+
 
 # =============================================================================
 # Shell Commands
@@ -117,6 +126,7 @@ BUILTIN_COMMANDS = {
     "/profile": "Show or change agency profile",
     "/policy": "Check policy for an action",
     "/events": "Manage event triggers",
+    "/audit": "View audit log",
     "/exit": "Exit the shell",
 }
 
@@ -168,6 +178,10 @@ async def handle_builtin(command: str, client: AgentClient) -> bool:
 
     elif cmd == "/events":
         await handle_events_command(args, client)
+        return True
+
+    elif cmd == "/audit":
+        await handle_audit_command(args, client)
         return True
 
     return False
@@ -294,6 +308,92 @@ async def handle_events_command(args: list, client: AgentClient):
     else:
         console.print("[yellow]Usage: /events [enable|disable ID][/yellow]")
         console.print("Run [cyan]/events help[/cyan] for more info.")
+
+
+async def handle_audit_command(args: list, client: AgentClient):
+    """Handle /audit subcommands."""
+
+    if not args:
+        # Show summary
+        try:
+            summary = await client.get_audit_summary(24)
+            console.print("\n[bold]Audit Summary (last 24h)[/bold]\n")
+            console.print(f"  Total entries:    {summary.get('total_entries', 0)}")
+            console.print(f"  Events triggered: {summary.get('events_triggered', 0)}")
+            console.print(f"  User denials:     {summary.get('user_denials', 0)}")
+            console.print(f"  Errors:           {summary.get('errors', 0)}")
+
+            tools = summary.get("tools_used", {})
+            if tools:
+                console.print("\n[bold]Tools Used[/bold]")
+                for tool, count in sorted(tools.items(), key=lambda x: -x[1])[:5]:
+                    console.print(f"  {tool:20} {count}")
+
+            actions = summary.get("actions", {})
+            if actions:
+                console.print("\n[bold]Actions[/bold]")
+                for action, count in sorted(actions.items(), key=lambda x: -x[1])[:5]:
+                    console.print(f"  {action:25} {count}")
+            console.print()
+        except Exception as e:
+            console.print(f"[red]Error getting audit summary: {e}[/red]")
+        return
+
+    subcmd = args[0].lower()
+
+    if subcmd == "log" or subcmd == "entries":
+        count = int(args[1]) if len(args) > 1 else 20
+        try:
+            result = await client.get_audit_entries(count)
+            entries = result.get("entries", [])
+
+            if not entries:
+                console.print("[dim]No audit entries found.[/dim]")
+                return
+
+            console.print(f"\n[bold]Recent Audit Entries ({len(entries)})[/bold]\n")
+            for entry in entries:
+                ts = entry.get("timestamp", "")[:19]  # Trim microseconds
+                action = entry.get("action", "unknown")
+
+                # Color code by action type
+                if "failed" in action or "denied" in action:
+                    color = "red"
+                elif "completed" in action or "confirmed" in action:
+                    color = "green"
+                elif "invoked" in action or "triggered" in action:
+                    color = "yellow"
+                else:
+                    color = "dim"
+
+                line = f"[dim]{ts}[/dim] [{color}]{action:20}[/{color}]"
+
+                if entry.get("tool_name"):
+                    line += f" [cyan]{entry['tool_name']}[/cyan]"
+                if entry.get("trigger_id"):
+                    line += f" [magenta]{entry['trigger_id']}[/magenta]"
+                if entry.get("domain"):
+                    line += f" {entry['domain']}.{entry.get('operation', '')}"
+                if entry.get("error"):
+                    line += f" [red]{entry['error'][:50]}[/red]"
+
+                console.print(line)
+            console.print()
+        except Exception as e:
+            console.print(f"[red]Error getting audit entries: {e}[/red]")
+
+    elif subcmd == "help":
+        console.print("\n[bold]Audit Commands[/bold]")
+        console.print("  [cyan]/audit[/cyan]           Show 24h summary")
+        console.print("  [cyan]/audit log[/cyan]       Show recent entries")
+        console.print("  [cyan]/audit log N[/cyan]     Show N recent entries")
+        console.print()
+        console.print("[bold]Log file location:[/bold] ~/.ai-os/audit/audit.jsonl")
+        console.print()
+
+    else:
+        console.print("[yellow]Usage: /audit [log [N]][/yellow]")
+        console.print("Run [cyan]/audit help[/cyan] for more info.")
 
 
 # =============================================================================

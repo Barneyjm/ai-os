@@ -22,6 +22,7 @@ from aiohttp import web, UnixConnector
 
 from policy import AgencyPolicy, AgencyLevel, Action, PolicyDecision
 from events import EventManager, EventType, Event, EventTrigger, AgentEventHandler
+from audit import get_audit_logger, AuditAction
 
 # =============================================================================
 # Configuration
@@ -757,6 +758,13 @@ class SystemAgent:
         self.event_manager = EventManager()
         self._setup_event_system()
 
+        # Audit logging
+        self.audit = get_audit_logger()
+        self.audit.log_agent_lifecycle(AuditAction.AGENT_STARTED, {
+            "backend": config.inference_backend,
+            "model": config.model_name
+        })
+
         self.logger.info(f"Using {config.inference_backend} backend with model {config.model_name}")
 
     def _setup_event_system(self):
@@ -914,6 +922,7 @@ You have access to these capabilities: filesystem operations, process management
                 tool = self.tools.tools.get(tool_name)
                 if not tool:
                     result = {"error": f"Unknown tool: {tool_name}"}
+                    self.audit.log_tool_failed(session_id, tool_name, f"Unknown tool: {tool_name}")
                 else:
                     action = tool.to_action(**tool_args)
                     decision = self.policy.get_policy(action)
@@ -921,6 +930,12 @@ You have access to these capabilities: filesystem operations, process management
                     self.logger.info(
                         f"Policy decision: {decision.level} for {action.policy_key} "
                         f"(from {decision.source})"
+                    )
+
+                    # Audit the policy check
+                    self.audit.log_policy_check(
+                        session_id, action.domain, action.operation, action.target,
+                        str(decision.level), decision.source
                     )
 
                     match decision.level:
@@ -945,8 +960,16 @@ You have access to these capabilities: filesystem operations, process management
 
                             self.policy.record_response(action, decision, approved, response_time)
 
+                            # Audit user decision
+                            self.audit.log_user_decision(
+                                session_id, approved, action.domain, action.operation,
+                                action.target, response_time
+                            )
+
                             if approved:
-                                result = await tool.handler(**tool_args)
+                                result = await self._execute_tool_with_audit(
+                                    session_id, tool, tool_name, tool_args, action
+                                )
                             else:
                                 result = {
                                     "policy": "denied",
@@ -954,11 +977,15 @@ You have access to these capabilities: filesystem operations, process management
                                 }
 
                         case AgencyLevel.AUTO:
-                            result = await tool.handler(**tool_args)
+                            result = await self._execute_tool_with_audit(
+                                session_id, tool, tool_name, tool_args, action
+                            )
                             notify_callback(action, f"Completed: {action.description}")
 
                         case AgencyLevel.AUTONOMOUS:
-                            result = await tool.handler(**tool_args)
+                            result = await self._execute_tool_with_audit(
+                                session_id, tool, tool_name, tool_args, action
+                            )
 
                 messages.append({
                     "role": "tool",
@@ -970,10 +997,45 @@ You have access to these capabilities: filesystem operations, process management
             messages = messages[:1] + messages[-40:]
             self.conversations[session_id] = messages
 
+    async def _execute_tool_with_audit(
+        self,
+        session_id: str,
+        tool,
+        tool_name: str,
+        tool_args: dict,
+        action
+    ) -> dict:
+        """Execute a tool with full audit logging."""
+        import time
+
+        # Log invocation
+        self.audit.log_tool_invoked(
+            session_id, tool_name, tool_args,
+            action.domain, action.operation, action.target
+        )
+
+        start = time.time()
+        try:
+            result = await tool.handler(**tool_args)
+            duration_ms = int((time.time() - start) * 1000)
+
+            success = result.get("success", True) if isinstance(result, dict) else True
+            self.audit.log_tool_completed(session_id, tool_name, result, duration_ms, success)
+
+            return result
+
+        except Exception as e:
+            duration_ms = int((time.time() - start) * 1000)
+            self.audit.log_tool_failed(session_id, tool_name, str(e), duration_ms)
+            return {"success": False, "error": str(e)}
+
     def set_profile(self, profile_name: str) -> bool:
         """Change the active agency profile."""
+        old_profile = self.policy.active_profile
         success = self.policy.set_profile(profile_name)
         if success:
+            # Audit the profile change
+            self.audit.log_profile_changed("system", old_profile or "default", profile_name)
             for session_id, messages in self.conversations.items():
                 if messages and messages[0]["role"] == "system":
                     messages[0]["content"] = self._get_system_prompt()
@@ -986,6 +1048,15 @@ You have access to these capabilities: filesystem operations, process management
             "available_profiles": self.policy.list_profiles(),
             "pending_suggestions": self.policy.get_pending_suggestions()
         }
+
+    def get_audit_summary(self, hours: int = 24) -> dict:
+        """Get a summary of audit activity."""
+        return self.audit.get_summary(hours)
+
+    def get_recent_audit_entries(self, count: int = 50, action_filter: list = None) -> list:
+        """Get recent audit log entries."""
+        entries = self.audit.get_recent_entries(count, action_filter)
+        return [entry.to_dict() for entry in entries]
 
 
 # =============================================================================
@@ -1083,6 +1154,19 @@ async def create_ipc_server(agent: SystemAgent, socket_path: str):
         agent.event_manager.triggers[trigger_id].enabled = False
         return web.json_response({"success": True, "trigger": trigger_id, "enabled": False})
 
+    async def handle_audit_summary(request: web.Request) -> web.Response:
+        hours = int(request.query.get("hours", "24"))
+        summary = agent.get_audit_summary(hours)
+        return web.json_response(summary)
+
+    async def handle_audit_entries(request: web.Request) -> web.Response:
+        count = int(request.query.get("count", "50"))
+        action_filter = request.query.get("filter", "").split(",") if request.query.get("filter") else None
+        if action_filter:
+            action_filter = [a.strip() for a in action_filter if a.strip()]
+        entries = agent.get_recent_audit_entries(count, action_filter)
+        return web.json_response({"entries": entries})
+
     app = web.Application()
     app.router.add_post("/chat", handle_chat)
     app.router.add_get("/profiles", handle_profile_list)
@@ -1093,6 +1177,8 @@ async def create_ipc_server(agent: SystemAgent, socket_path: str):
     app.router.add_get("/events", handle_events_status)
     app.router.add_post("/events/trigger/enable", handle_events_enable)
     app.router.add_post("/events/trigger/disable", handle_events_disable)
+    app.router.add_get("/audit/summary", handle_audit_summary)
+    app.router.add_get("/audit/entries", handle_audit_entries)
 
     if os.path.exists(socket_path):
         os.unlink(socket_path)

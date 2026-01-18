@@ -78,11 +78,40 @@ pytest tests/test_policy.py -v
 |----------|-------------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API key | (none) |
 | `ANTHROPIC_BASE_URL` | Anthropic API base URL | https://api.anthropic.com |
+| `OPENAI_API_KEY` | OpenAI-compatible API key (Fireworks, OpenAI, etc.) | (none) |
 | `AI_INFERENCE_BACKEND` | "anthropic" or "openai" | auto-detect |
 | `AI_MODEL_NAME` | Model to use | claude-sonnet-4-20250514 |
 | `AI_RUNTIME_URL` | OpenAI-compatible URL | (none) |
 | `AI_DEV_MODE` | Enable HTTP server mode | (disabled) |
 | `AI_POLICY_CONFIG` | Path to agency.toml | (auto-detect) |
+
+### Backend Configuration Examples
+
+**Anthropic (Claude)**:
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export AI_MODEL_NAME="claude-sonnet-4-20250514"
+```
+
+**Fireworks AI**:
+```bash
+export OPENAI_API_KEY="fw_..."
+export AI_RUNTIME_URL="https://api.fireworks.ai/inference/v1"
+export AI_MODEL_NAME="accounts/fireworks/models/llama-v3p1-70b-instruct"
+```
+
+**OpenAI**:
+```bash
+export OPENAI_API_KEY="sk-..."
+export AI_RUNTIME_URL="https://api.openai.com/v1"
+export AI_MODEL_NAME="gpt-4o"
+```
+
+**Local llama.cpp** (no auth):
+```bash
+export AI_RUNTIME_URL="http://localhost:8080"
+export AI_MODEL_NAME="llama-3-8b"
+```
 
 ## Testing Guidelines
 

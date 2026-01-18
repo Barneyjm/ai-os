@@ -37,6 +37,8 @@ class AgentConfig:
     consent_timeout: int = 30
     log_level: str = "INFO"
     policy_config: Optional[str] = None
+    # OpenAI-compatible API settings (Fireworks, OpenAI, etc.)
+    openai_api_key: str = ""
     # Anthropic-specific settings
     anthropic_api_key: str = ""
     anthropic_base_url: str = "https://api.anthropic.com"
@@ -45,15 +47,30 @@ class AgentConfig:
     @classmethod
     def from_env(cls) -> "AgentConfig":
         """Create config from environment variables."""
+        # Determine backend: explicit setting > auto-detect from keys
+        explicit_backend = os.environ.get("AI_INFERENCE_BACKEND", "")
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+
+        if explicit_backend:
+            backend = explicit_backend
+        elif anthropic_key:
+            backend = "anthropic"
+        elif openai_key:
+            backend = "openai"
+        else:
+            backend = "openai"  # Default to OpenAI-compatible (local llama.cpp)
+
         return cls(
             runtime_socket=os.environ.get("AI_RUNTIME_SOCKET", "/run/ai-runtime.sock"),
             runtime_url=os.environ.get("AI_RUNTIME_URL", ""),
             agent_socket=os.environ.get("AI_AGENT_SOCKET", "/run/system-agent.sock"),
             model_name=os.environ.get("AI_MODEL_NAME", "claude-sonnet-4-20250514"),
             policy_config=os.environ.get("AI_POLICY_CONFIG"),
-            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            openai_api_key=openai_key,
+            anthropic_api_key=anthropic_key,
             anthropic_base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-            inference_backend=os.environ.get("AI_INFERENCE_BACKEND", "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"),
+            inference_backend=backend,
         )
 
 
@@ -457,11 +474,23 @@ class ToolRegistry:
 
 
 class InferenceClient:
-    """Client for communicating with OpenAI-compatible inference runtimes."""
+    """Client for communicating with OpenAI-compatible inference runtimes.
+
+    Supports local llama.cpp (no auth), Fireworks AI, OpenAI, and other
+    OpenAI-compatible APIs that use Bearer token authentication.
+    """
 
     def __init__(self, config: AgentConfig):
         self.config = config
         self.use_http = bool(config.runtime_url)
+        self.logger = logging.getLogger("openai-client")
+
+    def _get_headers(self) -> dict:
+        """Build request headers, including auth if API key is set."""
+        headers = {"Content-Type": "application/json"}
+        if self.config.openai_api_key:
+            headers["Authorization"] = f"Bearer {self.config.openai_api_key}"
+        return headers
 
     async def complete(
         self,
@@ -483,13 +512,18 @@ class InferenceClient:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
+        headers = self._get_headers()
+
         if self.use_http:
-            # HTTP mode (development)
+            # HTTP mode (cloud APIs or local dev server)
+            url = f"{self.config.runtime_url}/v1/chat/completions"
+            self.logger.debug(f"Sending request to {url}")
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.config.runtime_url}/v1/chat/completions",
-                    json=payload
-                ) as resp:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        self.logger.error(f"API error {resp.status}: {error_text}")
+                        raise Exception(f"API error {resp.status}: {error_text}")
                     return await resp.json()
         else:
             # Unix socket mode (production)
@@ -497,7 +531,8 @@ class InferenceClient:
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(
                     "http://localhost/v1/chat/completions",
-                    json=payload
+                    json=payload,
+                    headers=headers
                 ) as resp:
                     return await resp.json()
 

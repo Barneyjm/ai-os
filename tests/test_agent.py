@@ -52,11 +52,39 @@ class TestAgentConfig:
             {
                 "ANTHROPIC_API_KEY": "test-key",
             },
-            clear=False,
+            clear=True,
         ):
             config = AgentConfig.from_env()
             assert config.inference_backend == "anthropic"
             assert config.anthropic_api_key == "test-key"
+
+    def test_from_env_openai_api_key(self):
+        """Should load OpenAI API key from environment."""
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENAI_API_KEY": "sk-test-key",
+                "AI_RUNTIME_URL": "https://api.fireworks.ai/inference/v1",
+            },
+            clear=True,
+        ):
+            config = AgentConfig.from_env()
+            assert config.openai_api_key == "sk-test-key"
+            assert config.inference_backend == "openai"
+
+    def test_from_env_explicit_backend_override(self):
+        """Should use explicit backend setting over auto-detect."""
+        with patch.dict(
+            "os.environ",
+            {
+                "ANTHROPIC_API_KEY": "anthropic-key",
+                "AI_INFERENCE_BACKEND": "openai",
+            },
+            clear=True,
+        ):
+            config = AgentConfig.from_env()
+            # Explicit setting should override auto-detection
+            assert config.inference_backend == "openai"
 
 
 class TestTool:
@@ -272,6 +300,25 @@ class TestInferenceClient:
         config = AgentConfig(runtime_url="")
         client = InferenceClient(config)
         assert client.use_http is False
+
+    def test_get_headers_no_api_key(self):
+        """Should return minimal headers when no API key."""
+        config = AgentConfig(runtime_url="http://localhost:8080")
+        client = InferenceClient(config)
+        headers = client._get_headers()
+        assert headers == {"Content-Type": "application/json"}
+        assert "Authorization" not in headers
+
+    def test_get_headers_with_api_key(self):
+        """Should include Authorization header when API key is set."""
+        config = AgentConfig(
+            runtime_url="https://api.fireworks.ai/inference/v1",
+            openai_api_key="fw-test-key"
+        )
+        client = InferenceClient(config)
+        headers = client._get_headers()
+        assert headers["Content-Type"] == "application/json"
+        assert headers["Authorization"] == "Bearer fw-test-key"
 
 
 class TestAnthropicInferenceClient:

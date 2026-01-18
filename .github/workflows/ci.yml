@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=. --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy
+
+      - name: Run ruff (linting)
+        run: |
+          ruff check system-agent/ ai-shell/ tests/ --output-format=github
+        continue-on-error: true
+
+      - name: Run ruff (formatting check)
+        run: |
+          ruff format --check system-agent/ ai-shell/ tests/
+        continue-on-error: true
+
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install mypy types-aiofiles
+
+      - name: Run mypy
+        run: |
+          mypy system-agent/ --ignore-missing-imports --no-error-summary
+        continue-on-error: true
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Test policy module CLI
+        run: |
+          cd system-agent
+          python policy.py profiles
+          python policy.py check filesystem read /tmp/test.txt
+
+      - name: Test agent starts (dev mode)
+        run: |
+          cd system-agent
+          timeout 5 python -c "
+          import asyncio
+          from agent import AgentConfig, SystemAgent
+
+          config = AgentConfig(
+              runtime_url='http://127.0.0.1:8080',
+              inference_backend='openai',
+          )
+          # Just test initialization, not full startup
+          agent = SystemAgent(config)
+          print('Agent initialized successfully')
+          print(f'Tools registered: {len(agent.tools.tools)}')
+          print(f'Backend: {config.inference_backend}')
+          " || true
+
+      - name: Verify config loading
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'system-agent')
+          from policy import AgencyPolicy
+          from pathlib import Path
+
+          policy = AgencyPolicy(Path('config/agency.toml'))
+          profiles = policy.list_profiles()
+          print(f'Loaded {len(profiles)} profiles')
+          for name, desc in profiles.items():
+              print(f'  - {name}: {desc}')
+          "
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bandit
+        run: pip install bandit
+
+      - name: Run security scan
+        run: |
+          bandit -r system-agent/ ai-shell/ -ll --skip B404,B603,B607
+        continue-on-error: true

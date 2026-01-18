@@ -332,3 +332,68 @@ file_patterns = ["*.log", "*.err"]
 cooldown_seconds = 60
 prompt = "New entries appeared in system logs. Check for errors or warnings and summarize any issues that need attention."
 
+# =============================================================================
+# Peripheral Event Triggers
+# =============================================================================
+
+# Example: USB storage device connected
+[[events.triggers]]
+id = "usb-storage-handler"
+enabled = false
+event_types = ["usb_connected"]
+device_types = ["mass_storage"]
+cooldown_seconds = 10
+prompt = "A USB storage device was connected. List its contents and check for any suspicious files. Suggest mounting location if not auto-mounted."
+
+# Example: USB device connected (any type)
+[[events.triggers]]
+id = "usb-any-device"
+enabled = false
+event_types = ["usb_connected", "usb_disconnected"]
+cooldown_seconds = 5
+prompt = "A USB device was connected or disconnected. Report the device type and any relevant actions."
+
+# Example: Network connection changed
+[[events.triggers]]
+id = "network-change-handler"
+enabled = false
+event_types = ["network_connected", "network_disconnected"]
+interface_patterns = ["wlan*", "eth*"]
+cooldown_seconds = 30
+prompt = "Network connectivity changed. Check current connection status, IP configuration, and internet access. Report any issues."
+
+# Example: WiFi only events
+[[events.triggers]]
+id = "wifi-monitor"
+enabled = false
+event_types = ["network_connected", "network_disconnected"]
+interface_patterns = ["wlan*", "wlp*"]
+cooldown_seconds = 60
+prompt = "WiFi connection changed. If disconnected, list available networks. If connected, verify internet connectivity and report network details."
+
+# Example: Power adapter events
+[[events.triggers]]
+id = "power-adapter-handler"
+enabled = false
+event_types = ["power_ac_connected", "power_ac_disconnected"]
+cooldown_seconds = 10
+prompt = "Power adapter was connected or disconnected. Adjust power profile accordingly and report battery status."
+
+# Example: Low battery warning
+[[events.triggers]]
+id = "low-battery-handler"
+enabled = false
+event_types = ["power_low_battery"]
+threshold = 20.0
+cooldown_seconds = 300
+prompt = "Battery is low. List power-hungry processes, suggest power-saving actions, and warn about unsaved work."
+
+# Example: Critical battery warning
+[[events.triggers]]
+id = "critical-battery-handler"
+enabled = false
+event_types = ["power_low_battery"]
+threshold = 10.0
+cooldown_seconds = 60
+prompt = "CRITICAL: Battery is critically low! Immediately save all work, close unnecessary applications, and prepare for hibernation."
+

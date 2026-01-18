@@ -449,3 +449,185 @@ class TestEventManagerSchedule:
         # Should have received at least one schedule event
         assert len(received_events) >= 1
         assert received_events[0].event_type == EventType.SCHEDULE
+
+
+class TestPeripheralEventTypes:
+    """Tests for peripheral event types."""
+
+    def test_usb_events(self):
+        """Should have USB event types."""
+        assert EventType.USB_CONNECTED.value == "usb_connected"
+        assert EventType.USB_DISCONNECTED.value == "usb_disconnected"
+
+    def test_network_events(self):
+        """Should have network event types."""
+        assert EventType.NETWORK_CONNECTED.value == "network_connected"
+        assert EventType.NETWORK_DISCONNECTED.value == "network_disconnected"
+        assert EventType.NETWORK_CHANGED.value == "network_changed"
+
+    def test_power_events(self):
+        """Should have power event types."""
+        assert EventType.POWER_AC_CONNECTED.value == "power_ac_connected"
+        assert EventType.POWER_AC_DISCONNECTED.value == "power_ac_disconnected"
+        assert EventType.POWER_LOW_BATTERY.value == "power_low_battery"
+
+    def test_bluetooth_events(self):
+        """Should have bluetooth event types."""
+        assert EventType.BLUETOOTH_CONNECTED.value == "bluetooth_connected"
+        assert EventType.BLUETOOTH_DISCONNECTED.value == "bluetooth_disconnected"
+
+    def test_display_events(self):
+        """Should have display event types."""
+        assert EventType.DISPLAY_CONNECTED.value == "display_connected"
+        assert EventType.DISPLAY_DISCONNECTED.value == "display_disconnected"
+
+    def test_audio_events(self):
+        """Should have audio device event types."""
+        assert EventType.AUDIO_DEVICE_CONNECTED.value == "audio_device_connected"
+        assert EventType.AUDIO_DEVICE_DISCONNECTED.value == "audio_device_disconnected"
+
+
+class TestEventTriggerPeripheral:
+    """Tests for peripheral-related EventTrigger features."""
+
+    def test_matches_device_no_filter(self):
+        """Should match all devices when no filter specified."""
+        trigger = EventTrigger(
+            id="test",
+            event_types=[EventType.USB_CONNECTED],
+        )
+        assert trigger.matches_device("mass_storage") is True
+        assert trigger.matches_device("hid") is True
+
+    def test_matches_device_with_filter(self):
+        """Should filter by device type."""
+        trigger = EventTrigger(
+            id="test",
+            event_types=[EventType.USB_CONNECTED],
+            device_types=["mass_storage", "hid"]
+        )
+        assert trigger.matches_device("mass_storage") is True
+        assert trigger.matches_device("hid") is True
+        assert trigger.matches_device("printer") is False
+
+    def test_matches_interface_no_filter(self):
+        """Should match all interfaces when no filter specified."""
+        trigger = EventTrigger(
+            id="test",
+            event_types=[EventType.NETWORK_CONNECTED],
+        )
+        assert trigger.matches_interface("eth0") is True
+        assert trigger.matches_interface("wlan0") is True
+
+    def test_matches_interface_with_filter(self):
+        """Should filter by interface pattern."""
+        trigger = EventTrigger(
+            id="test",
+            event_types=[EventType.NETWORK_CONNECTED],
+            interface_patterns=["wlan*", "wlp*"]
+        )
+        assert trigger.matches_interface("wlan0") is True
+        assert trigger.matches_interface("wlp3s0") is True
+        assert trigger.matches_interface("eth0") is False
+
+
+class TestEventPromptPeripheral:
+    """Tests for peripheral event prompts."""
+
+    def test_usb_connected_prompt(self):
+        """Should generate prompt for USB connected event."""
+        event = Event(
+            event_type=EventType.USB_CONNECTED,
+            source="1234:5678",
+            data={"vendor": "Acme Corp", "product": "Flash Drive", "device_type": "mass_storage"}
+        )
+        prompt = event.to_prompt()
+        assert "USB device connected" in prompt
+        assert "Acme Corp" in prompt
+        assert "Flash Drive" in prompt
+
+    def test_network_connected_prompt(self):
+        """Should generate prompt for network connected event."""
+        event = Event(
+            event_type=EventType.NETWORK_CONNECTED,
+            source="wlan0",
+            data={"interface": "wlan0", "ssid": "MyWiFi"}
+        )
+        prompt = event.to_prompt()
+        assert "Network connected" in prompt
+        assert "wlan0" in prompt
+        assert "MyWiFi" in prompt
+
+    def test_power_events_prompt(self):
+        """Should generate prompts for power events."""
+        ac_event = Event(
+            event_type=EventType.POWER_AC_CONNECTED,
+            source="power"
+        )
+        assert "Power adapter connected" in ac_event.to_prompt()
+
+        battery_event = Event(
+            event_type=EventType.POWER_LOW_BATTERY,
+            source="battery",
+            data={"percent": 15}
+        )
+        prompt = battery_event.to_prompt()
+        assert "Low battery" in prompt
+        assert "15" in prompt
+
+
+class TestEventManagerPeripheral:
+    """Tests for EventManager peripheral support."""
+
+    def test_load_triggers_with_device_types(self):
+        """Should load triggers with device_types from config."""
+        manager = EventManager()
+        config = {
+            "events": {
+                "triggers": [
+                    {
+                        "id": "usb-storage",
+                        "event_types": ["usb_connected"],
+                        "device_types": ["mass_storage"],
+                        "enabled": True
+                    }
+                ]
+            }
+        }
+
+        manager.load_triggers_from_config(config)
+
+        assert "usb-storage" in manager.triggers
+        trigger = manager.triggers["usb-storage"]
+        assert "mass_storage" in trigger.device_types
+
+    def test_load_triggers_with_interface_patterns(self):
+        """Should load triggers with interface_patterns from config."""
+        manager = EventManager()
+        config = {
+            "events": {
+                "triggers": [
+                    {
+                        "id": "wifi-monitor",
+                        "event_types": ["network_connected"],
+                        "interface_patterns": ["wlan*", "wlp*"],
+                        "enabled": True
+                    }
+                ]
+            }
+        }
+
+        manager.load_triggers_from_config(config)
+
+        assert "wifi-monitor" in manager.triggers
+        trigger = manager.triggers["wifi-monitor"]
+        assert "wlan*" in trigger.interface_patterns
+        assert "wlp*" in trigger.interface_patterns
+
+    def test_get_status_includes_peripheral_monitor(self):
+        """Should include peripheral_monitor status."""
+        manager = EventManager()
+        status = manager.get_status()
+
+        assert "peripheral_monitor" in status
+        assert status["peripheral_monitor"] is False  # Not started yet

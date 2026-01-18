@@ -31,11 +31,16 @@ except ImportError:
 
 class EventType(Enum):
     """Types of events that can trigger the agent."""
+    # File system events
     FILE_CREATED = "file_created"
     FILE_MODIFIED = "file_modified"
     FILE_DELETED = "file_deleted"
     FILE_MOVED = "file_moved"
+
+    # Scheduled events
     SCHEDULE = "schedule"
+
+    # System events
     SYSTEM_STARTUP = "system_startup"
     SYSTEM_SHUTDOWN = "system_shutdown"
     LOW_DISK_SPACE = "low_disk_space"
@@ -43,6 +48,24 @@ class EventType(Enum):
     HIGH_MEMORY = "high_memory"
     PROCESS_STARTED = "process_started"
     PROCESS_STOPPED = "process_stopped"
+
+    # Peripheral/hardware events
+    USB_CONNECTED = "usb_connected"
+    USB_DISCONNECTED = "usb_disconnected"
+    NETWORK_CONNECTED = "network_connected"
+    NETWORK_DISCONNECTED = "network_disconnected"
+    NETWORK_CHANGED = "network_changed"
+    BLUETOOTH_CONNECTED = "bluetooth_connected"
+    BLUETOOTH_DISCONNECTED = "bluetooth_disconnected"
+    POWER_AC_CONNECTED = "power_ac_connected"
+    POWER_AC_DISCONNECTED = "power_ac_disconnected"
+    POWER_LOW_BATTERY = "power_low_battery"
+    DISPLAY_CONNECTED = "display_connected"
+    DISPLAY_DISCONNECTED = "display_disconnected"
+    AUDIO_DEVICE_CONNECTED = "audio_device_connected"
+    AUDIO_DEVICE_DISCONNECTED = "audio_device_disconnected"
+
+    # Custom events
     CUSTOM = "custom"
 
 
@@ -58,14 +81,45 @@ class Event:
     def to_prompt(self) -> str:
         """Convert event to a prompt for the agent."""
         prompts = {
+            # File events
             EventType.FILE_CREATED: f"A new file was created: {self.source}\n{self._file_context()}",
             EventType.FILE_MODIFIED: f"A file was modified: {self.source}\n{self._file_context()}",
             EventType.FILE_DELETED: f"A file was deleted: {self.source}",
             EventType.FILE_MOVED: f"A file was moved from {self.data.get('src_path', '?')} to {self.source}",
+
+            # Schedule events
             EventType.SCHEDULE: f"Scheduled task triggered: {self.data.get('task_name', self.source)}",
+
+            # System events
             EventType.LOW_DISK_SPACE: f"Low disk space warning: {self.data.get('percent_free', '?')}% free on {self.source}",
             EventType.HIGH_CPU: f"High CPU usage detected: {self.data.get('percent', '?')}%",
             EventType.HIGH_MEMORY: f"High memory usage detected: {self.data.get('percent', '?')}%",
+
+            # USB events
+            EventType.USB_CONNECTED: f"USB device connected: {self._device_info()}",
+            EventType.USB_DISCONNECTED: f"USB device disconnected: {self._device_info()}",
+
+            # Network events
+            EventType.NETWORK_CONNECTED: f"Network connected: {self.data.get('interface', self.source)} ({self.data.get('ssid', 'wired')})",
+            EventType.NETWORK_DISCONNECTED: f"Network disconnected: {self.data.get('interface', self.source)}",
+            EventType.NETWORK_CHANGED: f"Network changed: {self.data.get('interface', self.source)} - {self.data.get('reason', 'configuration changed')}",
+
+            # Bluetooth events
+            EventType.BLUETOOTH_CONNECTED: f"Bluetooth device connected: {self.data.get('device_name', self.source)}",
+            EventType.BLUETOOTH_DISCONNECTED: f"Bluetooth device disconnected: {self.data.get('device_name', self.source)}",
+
+            # Power events
+            EventType.POWER_AC_CONNECTED: "Power adapter connected - now on AC power",
+            EventType.POWER_AC_DISCONNECTED: "Power adapter disconnected - now on battery",
+            EventType.POWER_LOW_BATTERY: f"Low battery warning: {self.data.get('percent', '?')}% remaining",
+
+            # Display events
+            EventType.DISPLAY_CONNECTED: f"Display connected: {self.data.get('display_name', self.source)}",
+            EventType.DISPLAY_DISCONNECTED: f"Display disconnected: {self.data.get('display_name', self.source)}",
+
+            # Audio events
+            EventType.AUDIO_DEVICE_CONNECTED: f"Audio device connected: {self.data.get('device_name', self.source)}",
+            EventType.AUDIO_DEVICE_DISCONNECTED: f"Audio device disconnected: {self.data.get('device_name', self.source)}",
         }
         base = prompts.get(self.event_type, f"Event occurred: {self.event_type.value} on {self.source}")
 
@@ -82,6 +136,17 @@ class Event:
         if self.data.get("size"):
             parts.append(f"Size: {self.data['size']} bytes")
         return " ".join(parts)
+
+    def _device_info(self) -> str:
+        """Get formatted device information."""
+        parts = []
+        if self.data.get("vendor"):
+            parts.append(self.data["vendor"])
+        if self.data.get("product"):
+            parts.append(self.data["product"])
+        if self.data.get("device_type"):
+            parts.append(f"({self.data['device_type']})")
+        return " ".join(parts) if parts else self.source
 
 
 @dataclass
@@ -103,6 +168,10 @@ class EventTrigger:
     # System monitoring options
     threshold: Optional[float] = None  # For CPU/memory/disk thresholds
 
+    # Peripheral/device options
+    device_types: list[str] = field(default_factory=list)  # ["usb_storage", "keyboard", etc.]
+    interface_patterns: list[str] = field(default_factory=list)  # ["eth*", "wlan*", etc.]
+
     # Action configuration
     prompt: Optional[str] = None  # Custom prompt to send to agent
     auto_approve: bool = False  # Skip policy check for this trigger
@@ -123,6 +192,26 @@ class EventTrigger:
         # Check include patterns
         for pattern in self.file_patterns:
             if fnmatch.fnmatch(filename, pattern):
+                return True
+        return False
+
+    def matches_device(self, device_type: str, device_info: dict = None) -> bool:
+        """Check if a device matches this trigger's device type filters."""
+        # If no device_types filter, match all
+        if not self.device_types:
+            return True
+
+        # Check if device_type is in the allowed list
+        return device_type in self.device_types
+
+    def matches_interface(self, interface: str) -> bool:
+        """Check if a network interface matches this trigger's patterns."""
+        # If no interface patterns, match all
+        if not self.interface_patterns:
+            return True
+
+        for pattern in self.interface_patterns:
+            if fnmatch.fnmatch(interface, pattern):
                 return True
         return False
 
@@ -307,6 +396,400 @@ class ScheduleParser:
         return from_time + timedelta(minutes=1)
 
 
+class PeripheralMonitor:
+    """
+    Monitors peripheral devices and hardware events.
+
+    Uses /sys filesystem and udev for device monitoring on Linux.
+    Falls back gracefully if pyudev is not available.
+    """
+
+    # USB device class codes
+    USB_CLASSES = {
+        "01": "audio",
+        "02": "cdc_data",
+        "03": "hid",  # Keyboards, mice
+        "06": "image",  # Cameras, scanners
+        "07": "printer",
+        "08": "mass_storage",
+        "09": "hub",
+        "0a": "cdc_data",
+        "0e": "video",
+        "e0": "wireless",  # Bluetooth adapters
+        "ef": "misc",
+        "ff": "vendor_specific",
+    }
+
+    def __init__(self, event_queue: asyncio.Queue, triggers: dict):
+        self.event_queue = event_queue
+        self.triggers = triggers
+        self.logger = logging.getLogger("peripheral-monitor")
+        self.running = False
+        self._monitor_task: Optional[asyncio.Task] = None
+        self._udev_observer = None
+
+        # Track current state for change detection
+        self._known_usb_devices: set = set()
+        self._known_network_interfaces: dict = {}
+        self._last_power_state: Optional[bool] = None  # True = on AC
+
+        # Try to import pyudev
+        try:
+            import pyudev
+            self._pyudev = pyudev
+            self._udev_available = True
+        except ImportError:
+            self._pyudev = None
+            self._udev_available = False
+            self.logger.info("pyudev not available, using polling for USB events")
+
+    def _get_relevant_triggers(self, event_type: EventType) -> list:
+        """Get triggers that care about this event type."""
+        return [
+            t for t in self.triggers.values()
+            if t.enabled and event_type in t.event_types
+        ]
+
+    async def start(self):
+        """Start peripheral monitoring."""
+        if self.running:
+            return
+
+        self.running = True
+
+        # Initialize known state
+        self._known_usb_devices = self._get_current_usb_devices()
+        self._known_network_interfaces = self._get_network_state()
+        self._last_power_state = self._get_power_state()
+
+        # Start the monitor task
+        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        self.logger.info("Peripheral monitor started")
+
+    async def stop(self):
+        """Stop peripheral monitoring."""
+        self.running = False
+
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+            self._monitor_task = None
+
+        self.logger.info("Peripheral monitor stopped")
+
+    async def _monitor_loop(self):
+        """Main monitoring loop - polls for changes."""
+        while self.running:
+            try:
+                await self._check_usb_changes()
+                await self._check_network_changes()
+                await self._check_power_changes()
+
+                # Poll every 2 seconds
+                await asyncio.sleep(2)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Peripheral monitor error: {e}")
+                await asyncio.sleep(5)
+
+    def _get_current_usb_devices(self) -> set:
+        """Get set of currently connected USB devices."""
+        devices = set()
+        usb_path = Path("/sys/bus/usb/devices")
+
+        if not usb_path.exists():
+            return devices
+
+        for device_dir in usb_path.iterdir():
+            if not device_dir.is_dir():
+                continue
+
+            # Skip hub interfaces (contain ":")
+            if ":" in device_dir.name:
+                continue
+
+            try:
+                vendor_file = device_dir / "idVendor"
+                product_file = device_dir / "idProduct"
+
+                if vendor_file.exists() and product_file.exists():
+                    vendor = vendor_file.read_text().strip()
+                    product = product_file.read_text().strip()
+                    device_id = f"{vendor}:{product}"
+                    devices.add(device_id)
+            except (OSError, IOError):
+                continue
+
+        return devices
+
+    def _get_usb_device_info(self, device_id: str) -> dict:
+        """Get detailed info about a USB device."""
+        usb_path = Path("/sys/bus/usb/devices")
+        vendor_id, product_id = device_id.split(":")
+
+        for device_dir in usb_path.iterdir():
+            if ":" in device_dir.name or not device_dir.is_dir():
+                continue
+
+            try:
+                vendor_file = device_dir / "idVendor"
+                product_file = device_dir / "idProduct"
+
+                if not (vendor_file.exists() and product_file.exists()):
+                    continue
+
+                if vendor_file.read_text().strip() != vendor_id:
+                    continue
+                if product_file.read_text().strip() != product_id:
+                    continue
+
+                # Found the device, get more info
+                info = {
+                    "vendor_id": vendor_id,
+                    "product_id": product_id,
+                }
+
+                # Get manufacturer name
+                mfr_file = device_dir / "manufacturer"
+                if mfr_file.exists():
+                    info["vendor"] = mfr_file.read_text().strip()
+
+                # Get product name
+                prod_name_file = device_dir / "product"
+                if prod_name_file.exists():
+                    info["product"] = prod_name_file.read_text().strip()
+
+                # Get device class
+                class_file = device_dir / "bDeviceClass"
+                if class_file.exists():
+                    class_code = class_file.read_text().strip().lower()
+                    info["device_type"] = self.USB_CLASSES.get(class_code, "unknown")
+
+                return info
+
+            except (OSError, IOError):
+                continue
+
+        return {"vendor_id": vendor_id, "product_id": product_id}
+
+    async def _check_usb_changes(self):
+        """Check for USB device changes."""
+        current_devices = self._get_current_usb_devices()
+
+        # Check for new devices
+        new_devices = current_devices - self._known_usb_devices
+        for device_id in new_devices:
+            triggers = self._get_relevant_triggers(EventType.USB_CONNECTED)
+            for trigger in triggers:
+                if trigger.can_trigger():
+                    device_info = self._get_usb_device_info(device_id)
+
+                    if trigger.matches_device(device_info.get("device_type", "unknown"), device_info):
+                        trigger.mark_triggered()
+                        event = Event(
+                            event_type=EventType.USB_CONNECTED,
+                            source=device_id,
+                            data={**device_info, "prompt": trigger.prompt},
+                            trigger_id=trigger.id
+                        )
+                        await self.event_queue.put(event)
+                        self.logger.info(f"USB connected: {device_info.get('product', device_id)}")
+
+        # Check for removed devices
+        removed_devices = self._known_usb_devices - current_devices
+        for device_id in removed_devices:
+            triggers = self._get_relevant_triggers(EventType.USB_DISCONNECTED)
+            for trigger in triggers:
+                if trigger.can_trigger():
+                    trigger.mark_triggered()
+                    event = Event(
+                        event_type=EventType.USB_DISCONNECTED,
+                        source=device_id,
+                        data={"prompt": trigger.prompt},
+                        trigger_id=trigger.id
+                    )
+                    await self.event_queue.put(event)
+                    self.logger.info(f"USB disconnected: {device_id}")
+
+        self._known_usb_devices = current_devices
+
+    def _get_network_state(self) -> dict:
+        """Get current network interface states."""
+        state = {}
+        net_path = Path("/sys/class/net")
+
+        if not net_path.exists():
+            return state
+
+        for iface_dir in net_path.iterdir():
+            iface_name = iface_dir.name
+            if iface_name == "lo":  # Skip loopback
+                continue
+
+            try:
+                # Check operstate (up/down)
+                operstate_file = iface_dir / "operstate"
+                if operstate_file.exists():
+                    operstate = operstate_file.read_text().strip()
+                    state[iface_name] = {
+                        "state": operstate,
+                        "is_up": operstate in ("up", "unknown"),
+                    }
+
+                    # Try to get carrier (actual link state)
+                    carrier_file = iface_dir / "carrier"
+                    if carrier_file.exists():
+                        try:
+                            carrier = int(carrier_file.read_text().strip())
+                            state[iface_name]["has_carrier"] = carrier == 1
+                        except (ValueError, IOError):
+                            pass
+
+            except (OSError, IOError):
+                continue
+
+        return state
+
+    async def _check_network_changes(self):
+        """Check for network interface changes."""
+        current_state = self._get_network_state()
+
+        for iface, info in current_state.items():
+            old_info = self._known_network_interfaces.get(iface, {})
+
+            # Check for new connection
+            if info.get("is_up") and not old_info.get("is_up"):
+                triggers = self._get_relevant_triggers(EventType.NETWORK_CONNECTED)
+                for trigger in triggers:
+                    if trigger.can_trigger() and trigger.matches_interface(iface):
+                        trigger.mark_triggered()
+                        event = Event(
+                            event_type=EventType.NETWORK_CONNECTED,
+                            source=iface,
+                            data={"interface": iface, "prompt": trigger.prompt},
+                            trigger_id=trigger.id
+                        )
+                        await self.event_queue.put(event)
+                        self.logger.info(f"Network connected: {iface}")
+
+            # Check for disconnection
+            elif not info.get("is_up") and old_info.get("is_up"):
+                triggers = self._get_relevant_triggers(EventType.NETWORK_DISCONNECTED)
+                for trigger in triggers:
+                    if trigger.can_trigger() and trigger.matches_interface(iface):
+                        trigger.mark_triggered()
+                        event = Event(
+                            event_type=EventType.NETWORK_DISCONNECTED,
+                            source=iface,
+                            data={"interface": iface, "prompt": trigger.prompt},
+                            trigger_id=trigger.id
+                        )
+                        await self.event_queue.put(event)
+                        self.logger.info(f"Network disconnected: {iface}")
+
+        # Check for interfaces that disappeared
+        for iface in set(self._known_network_interfaces.keys()) - set(current_state.keys()):
+            triggers = self._get_relevant_triggers(EventType.NETWORK_DISCONNECTED)
+            for trigger in triggers:
+                if trigger.can_trigger() and trigger.matches_interface(iface):
+                    trigger.mark_triggered()
+                    event = Event(
+                        event_type=EventType.NETWORK_DISCONNECTED,
+                        source=iface,
+                        data={"interface": iface, "reason": "interface_removed", "prompt": trigger.prompt},
+                        trigger_id=trigger.id
+                    )
+                    await self.event_queue.put(event)
+
+        self._known_network_interfaces = current_state
+
+    def _get_power_state(self) -> Optional[bool]:
+        """Get current power state (True = AC, False = battery, None = unknown)."""
+        # Check common power supply paths
+        power_paths = [
+            Path("/sys/class/power_supply/AC/online"),
+            Path("/sys/class/power_supply/AC0/online"),
+            Path("/sys/class/power_supply/ACAD/online"),
+        ]
+
+        for path in power_paths:
+            if path.exists():
+                try:
+                    return int(path.read_text().strip()) == 1
+                except (ValueError, IOError):
+                    continue
+
+        return None
+
+    def _get_battery_level(self) -> Optional[int]:
+        """Get battery percentage if available."""
+        battery_paths = [
+            Path("/sys/class/power_supply/BAT0/capacity"),
+            Path("/sys/class/power_supply/BAT1/capacity"),
+        ]
+
+        for path in battery_paths:
+            if path.exists():
+                try:
+                    return int(path.read_text().strip())
+                except (ValueError, IOError):
+                    continue
+
+        return None
+
+    async def _check_power_changes(self):
+        """Check for power state changes."""
+        current_state = self._get_power_state()
+
+        if current_state is None or self._last_power_state is None:
+            self._last_power_state = current_state
+            return
+
+        if current_state != self._last_power_state:
+            if current_state:  # Now on AC
+                event_type = EventType.POWER_AC_CONNECTED
+            else:  # Now on battery
+                event_type = EventType.POWER_AC_DISCONNECTED
+
+            triggers = self._get_relevant_triggers(event_type)
+            for trigger in triggers:
+                if trigger.can_trigger():
+                    trigger.mark_triggered()
+                    event = Event(
+                        event_type=event_type,
+                        source="power",
+                        data={"on_ac": current_state, "prompt": trigger.prompt},
+                        trigger_id=trigger.id
+                    )
+                    await self.event_queue.put(event)
+                    self.logger.info(f"Power state changed: {'AC' if current_state else 'Battery'}")
+
+        # Also check for low battery
+        if not current_state:  # On battery
+            battery_level = self._get_battery_level()
+            if battery_level is not None:
+                triggers = self._get_relevant_triggers(EventType.POWER_LOW_BATTERY)
+                for trigger in triggers:
+                    threshold = trigger.threshold or 20.0
+                    if battery_level <= threshold and trigger.can_trigger():
+                        trigger.mark_triggered()
+                        event = Event(
+                            event_type=EventType.POWER_LOW_BATTERY,
+                            source="battery",
+                            data={"percent": battery_level, "prompt": trigger.prompt},
+                            trigger_id=trigger.id
+                        )
+                        await self.event_queue.put(event)
+                        self.logger.info(f"Low battery: {battery_level}%")
+
+        self._last_power_state = current_state
+
+
 class EventManager:
     """Manages event triggers and dispatches events to handlers."""
 
@@ -319,6 +802,7 @@ class EventManager:
         self.logger = logging.getLogger("event-manager")
         self._schedule_tasks: dict[str, asyncio.Task] = {}
         self._system_monitor_task: Optional[asyncio.Task] = None
+        self._peripheral_monitor: Optional[PeripheralMonitor] = None
 
     def register_trigger(self, trigger: EventTrigger):
         """Register a new event trigger."""
@@ -352,6 +836,8 @@ class EventManager:
                 ignore_patterns=tconfig.get("ignore_patterns", [".*", "__pycache__", "*.pyc", ".git"]),
                 schedule=tconfig.get("schedule"),
                 threshold=tconfig.get("threshold"),
+                device_types=tconfig.get("device_types", []),
+                interface_patterns=tconfig.get("interface_patterns", []),
                 prompt=tconfig.get("prompt"),
                 auto_approve=tconfig.get("auto_approve", False),
                 cooldown_seconds=tconfig.get("cooldown_seconds", 60),
@@ -374,6 +860,9 @@ class EventManager:
 
         # Start system monitor
         await self._start_system_monitor()
+
+        # Start peripheral monitor
+        await self._start_peripheral_monitor()
 
         # Start event processing loop
         asyncio.create_task(self._process_events())
@@ -398,6 +887,11 @@ class EventManager:
         if self._system_monitor_task:
             self._system_monitor_task.cancel()
             self._system_monitor_task = None
+
+        # Stop peripheral monitor
+        if self._peripheral_monitor:
+            await self._peripheral_monitor.stop()
+            self._peripheral_monitor = None
 
     async def _start_file_watchers(self):
         """Start file system watchers for triggers that need them."""
@@ -484,6 +978,29 @@ class EventManager:
         if needs_monitor:
             self._system_monitor_task = asyncio.create_task(self._monitor_system())
             self.logger.info("Started system monitor")
+
+    async def _start_peripheral_monitor(self):
+        """Start peripheral device monitoring."""
+        peripheral_events = {
+            EventType.USB_CONNECTED, EventType.USB_DISCONNECTED,
+            EventType.NETWORK_CONNECTED, EventType.NETWORK_DISCONNECTED, EventType.NETWORK_CHANGED,
+            EventType.BLUETOOTH_CONNECTED, EventType.BLUETOOTH_DISCONNECTED,
+            EventType.POWER_AC_CONNECTED, EventType.POWER_AC_DISCONNECTED, EventType.POWER_LOW_BATTERY,
+            EventType.DISPLAY_CONNECTED, EventType.DISPLAY_DISCONNECTED,
+            EventType.AUDIO_DEVICE_CONNECTED, EventType.AUDIO_DEVICE_DISCONNECTED,
+        }
+
+        # Check if any triggers need peripheral monitoring
+        needs_monitor = any(
+            peripheral_events.intersection(t.event_types)
+            for t in self.triggers.values()
+            if t.enabled
+        )
+
+        if needs_monitor:
+            self._peripheral_monitor = PeripheralMonitor(self.event_queue, self.triggers)
+            await self._peripheral_monitor.start()
+            self.logger.info("Started peripheral monitor")
 
     async def _monitor_system(self):
         """Monitor system resources and trigger events."""
@@ -612,10 +1129,13 @@ class EventManager:
                     "last_triggered": t.last_triggered.isoformat() if t.last_triggered else None,
                     "watch_path": t.watch_path,
                     "schedule": t.schedule,
+                    "device_types": t.device_types if t.device_types else None,
+                    "interface_patterns": t.interface_patterns if t.interface_patterns else None,
                 }
                 for tid, t in self.triggers.items()
             },
             "file_watchers": len(self.file_observers),
             "schedule_tasks": len(self._schedule_tasks),
+            "peripheral_monitor": self._peripheral_monitor is not None and self._peripheral_monitor.running,
             "queue_size": self.event_queue.qsize(),
         }

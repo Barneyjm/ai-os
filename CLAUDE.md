@@ -305,6 +305,44 @@ cooldown_seconds = 3600
 prompt = "Disk space is low. Suggest cleanup actions."
 ```
 
+**Peripheral Event Triggers**:
+```toml
+# USB device connected (filter by device type)
+[[events.triggers]]
+id = "usb-storage-handler"
+enabled = true
+event_types = ["usb_connected"]
+device_types = ["mass_storage"]  # Filter: mass_storage, hid, audio, video, etc.
+cooldown_seconds = 10
+prompt = "A USB storage device was connected. List its contents."
+
+# Network connection changes (filter by interface)
+[[events.triggers]]
+id = "wifi-monitor"
+enabled = true
+event_types = ["network_connected", "network_disconnected"]
+interface_patterns = ["wlan*", "wlp*"]  # Only WiFi interfaces
+cooldown_seconds = 30
+prompt = "WiFi connection changed. Check connectivity status."
+
+# Power/battery events
+[[events.triggers]]
+id = "low-battery-handler"
+enabled = true
+event_types = ["power_low_battery"]
+threshold = 20.0  # Battery percentage
+cooldown_seconds = 300
+prompt = "Battery is low. Suggest power-saving actions."
+```
+
+**Peripheral Event Types**:
+- USB: `usb_connected`, `usb_disconnected`
+- Network: `network_connected`, `network_disconnected`, `network_changed`
+- Power: `power_ac_connected`, `power_ac_disconnected`, `power_low_battery`
+- Bluetooth: `bluetooth_connected`, `bluetooth_disconnected`
+- Display: `display_connected`, `display_disconnected`
+- Audio: `audio_device_connected`, `audio_device_disconnected`
+
 **Schedule Syntax**:
 - `@daily`, `@hourly`, `@weekly`, `@monthly`
 - `@every_5m`, `@every_1h`, `@every_30s`

@@ -5,6 +5,10 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/system-agent:${{ github.workspace }}/ai-shell
 
 jobs:
   test:
@@ -36,11 +40,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install aiohttp prompt_toolkit rich tomli
+          pip install pytest pytest-asyncio pytest-cov aioresponses
 
       - name: Run tests with coverage
         run: |
-          pytest --cov=. --cov-report=xml --cov-report=term-missing
+          pytest tests/ -v --cov=system-agent --cov=ai-shell --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.11'
@@ -67,7 +72,7 @@ jobs:
       - name: Install linting tools
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy
+          pip install ruff
 
       - name: Run ruff (linting)
         run: |
@@ -94,7 +99,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install aiohttp prompt_toolkit rich tomli
           pip install mypy types-aiofiles
 
       - name: Run mypy
@@ -118,7 +123,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install aiohttp prompt_toolkit rich tomli
 
       - name: Test policy module CLI
         run: |
@@ -145,10 +150,10 @@ jobs:
           " || true
 
       - name: Verify config loading
+        env:
+          PYTHONPATH: ${{ github.workspace }}/system-agent
         run: |
           python -c "
-          import sys
-          sys.path.insert(0, 'system-agent')
           from policy import AgencyPolicy
           from pathlib import Path
 

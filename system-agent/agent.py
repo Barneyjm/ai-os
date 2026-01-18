@@ -37,6 +37,10 @@ class AgentConfig:
     consent_timeout: int = 30
     log_level: str = "INFO"
     policy_config: Optional[str] = None
+    # Anthropic-specific settings
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = "https://api.anthropic.com"
+    inference_backend: str = "openai"  # "openai" or "anthropic"
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -45,8 +49,11 @@ class AgentConfig:
             runtime_socket=os.environ.get("AI_RUNTIME_SOCKET", "/run/ai-runtime.sock"),
             runtime_url=os.environ.get("AI_RUNTIME_URL", ""),
             agent_socket=os.environ.get("AI_AGENT_SOCKET", "/run/system-agent.sock"),
-            model_name=os.environ.get("AI_MODEL_NAME", "llama-3-8b"),
+            model_name=os.environ.get("AI_MODEL_NAME", "claude-sonnet-4-20250514"),
             policy_config=os.environ.get("AI_POLICY_CONFIG"),
+            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            anthropic_base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+            inference_backend=os.environ.get("AI_INFERENCE_BACKEND", "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"),
         )
 
 
@@ -86,19 +93,34 @@ class ToolRegistry:
     def register(self, tool: Tool):
         self.tools[tool.name] = tool
 
-    def get_tool_schemas(self) -> list[dict]:
-        """Return tool schemas in OpenAI function-calling format."""
-        return [
-            {
-                "type": "function",
-                "function": {
+    def get_tool_schemas(self, format: str = "openai") -> list[dict]:
+        """Return tool schemas in specified format.
+
+        Args:
+            format: "openai" for OpenAI/llama.cpp format, "anthropic" for Anthropic format
+        """
+        if format == "anthropic":
+            return [
+                {
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.parameters
+                    "input_schema": t.parameters
                 }
-            }
-            for t in self.tools.values()
-        ]
+                for t in self.tools.values()
+            ]
+        else:
+            # OpenAI format (default)
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters
+                    }
+                }
+                for t in self.tools.values()
+            ]
 
     def _register_builtin_tools(self):
         """Register core OS tools."""
@@ -435,7 +457,7 @@ class ToolRegistry:
 
 
 class InferenceClient:
-    """Client for communicating with the inference runtime."""
+    """Client for communicating with OpenAI-compatible inference runtimes."""
 
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -480,6 +502,198 @@ class InferenceClient:
                     return await resp.json()
 
 
+class AnthropicInferenceClient:
+    """Client for communicating with the Anthropic Messages API."""
+
+    ANTHROPIC_VERSION = "2023-06-01"
+
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self.logger = logging.getLogger("anthropic-client")
+
+    async def complete(
+        self,
+        messages: list[dict],
+        tools: list[dict] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048
+    ) -> dict:
+        """Send a completion request to the Anthropic Messages API.
+
+        Converts between OpenAI-style messages and Anthropic format,
+        then converts the response back to OpenAI format for compatibility.
+        """
+        # Convert messages to Anthropic format
+        anthropic_messages, system_prompt = self._convert_messages_to_anthropic(messages)
+
+        payload = {
+            "model": self.config.model_name,
+            "messages": anthropic_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = {"type": "auto"}
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.config.anthropic_api_key,
+            "anthropic-version": self.ANTHROPIC_VERSION,
+        }
+
+        url = f"{self.config.anthropic_base_url}/v1/messages"
+
+        self.logger.debug(f"Sending request to {url}")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    self.logger.error(f"Anthropic API error {resp.status}: {error_text}")
+                    raise Exception(f"Anthropic API error {resp.status}: {error_text}")
+
+                response = await resp.json()
+                # Convert response to OpenAI format for compatibility
+                return self._convert_response_to_openai(response)
+
+    def _convert_messages_to_anthropic(self, messages: list[dict]) -> tuple[list[dict], str]:
+        """Convert OpenAI-style messages to Anthropic format.
+
+        Returns (messages, system_prompt) tuple.
+        """
+        anthropic_messages = []
+        system_prompt = ""
+
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content", "")
+
+            if role == "system":
+                # Anthropic uses a separate system parameter
+                system_prompt = content
+            elif role == "user":
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": content
+                })
+            elif role == "assistant":
+                # Check if this message has tool calls
+                if "tool_calls" in msg and msg["tool_calls"]:
+                    # Convert tool calls to Anthropic format
+                    content_blocks = []
+                    if content:
+                        content_blocks.append({"type": "text", "text": content})
+                    for tc in msg["tool_calls"]:
+                        content_blocks.append({
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "input": json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                        })
+                    anthropic_messages.append({
+                        "role": "assistant",
+                        "content": content_blocks
+                    })
+                else:
+                    anthropic_messages.append({
+                        "role": "assistant",
+                        "content": content
+                    })
+            elif role == "tool":
+                # Tool results in Anthropic format go as user messages with tool_result content
+                tool_call_id = msg.get("tool_call_id", "")
+                tool_content = msg.get("content", "")
+
+                # Find if the last message is a user message with tool_result blocks
+                # If so, append to it; otherwise create a new one
+                if anthropic_messages and anthropic_messages[-1]["role"] == "user":
+                    last_content = anthropic_messages[-1]["content"]
+                    if isinstance(last_content, list):
+                        last_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_call_id,
+                            "content": tool_content
+                        })
+                        continue
+
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": tool_content
+                    }]
+                })
+
+        return anthropic_messages, system_prompt
+
+    def _convert_response_to_openai(self, anthropic_response: dict) -> dict:
+        """Convert Anthropic response to OpenAI format for compatibility."""
+        content_blocks = anthropic_response.get("content", [])
+        stop_reason = anthropic_response.get("stop_reason", "end_turn")
+
+        # Extract text content and tool uses
+        text_content = ""
+        tool_calls = []
+
+        for block in content_blocks:
+            if block["type"] == "text":
+                text_content += block.get("text", "")
+            elif block["type"] == "tool_use":
+                tool_calls.append({
+                    "id": block["id"],
+                    "type": "function",
+                    "function": {
+                        "name": block["name"],
+                        "arguments": json.dumps(block["input"])
+                    }
+                })
+
+        # Build OpenAI-compatible response
+        message = {
+            "role": "assistant",
+            "content": text_content if text_content else None,
+        }
+
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+
+        # Map stop reasons
+        finish_reason_map = {
+            "end_turn": "stop",
+            "tool_use": "tool_calls",
+            "max_tokens": "length",
+            "stop_sequence": "stop",
+        }
+
+        return {
+            "id": anthropic_response.get("id", ""),
+            "object": "chat.completion",
+            "model": anthropic_response.get("model", ""),
+            "choices": [{
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason_map.get(stop_reason, "stop")
+            }],
+            "usage": anthropic_response.get("usage", {})
+        }
+
+
+def create_inference_client(config: AgentConfig):
+    """Factory function to create the appropriate inference client."""
+    if config.inference_backend == "anthropic":
+        if not config.anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY is required for Anthropic backend")
+        return AnthropicInferenceClient(config)
+    else:
+        return InferenceClient(config)
+
+
 # =============================================================================
 # System Agent
 # =============================================================================
@@ -491,14 +705,19 @@ class SystemAgent:
     def __init__(self, config: AgentConfig):
         self.config = config
         self.tools = ToolRegistry()
-        self.inference = InferenceClient(config)
+        self.inference = create_inference_client(config)
         self.conversations: dict[str, list] = {}
         self.logger = logging.getLogger("system-agent")
+
+        # Determine tool schema format based on backend
+        self.tool_schema_format = "anthropic" if config.inference_backend == "anthropic" else "openai"
 
         policy_path = Path(config.policy_config) if config.policy_config else None
         self.policy = AgencyPolicy(policy_path)
 
         self.pending_notifications: dict[str, list] = {}
+
+        self.logger.info(f"Using {config.inference_backend} backend with model {config.model_name}")
 
     def _get_system_prompt(self) -> str:
         profile_info = ""
@@ -560,7 +779,7 @@ You have access to these capabilities: filesystem operations, process management
         while True:
             response = await self.inference.complete(
                 messages=messages,
-                tools=self.tools.get_tool_schemas()
+                tools=self.tools.get_tool_schemas(format=self.tool_schema_format)
             )
 
             assistant_message = response["choices"][0]["message"]

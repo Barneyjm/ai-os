@@ -1,0 +1,18 @@
+menu "AI-OS Packages"
+
+config BR2_PACKAGE_SYSTEM_AGENT
+    bool "system-agent"
+    select BR2_PACKAGE_PYTHON3
+    select BR2_PACKAGE_PYTHON_AIOHTTP
+    help
+      The core AI system agent.
+
+config BR2_PACKAGE_AI_SHELL
+    bool "ai-shell"
+    select BR2_PACKAGE_PYTHON3
+    select BR2_PACKAGE_PYTHON_PROMPT_TOOLKIT
+    select BR2_PACKAGE_PYTHON_RICH
+    help
+      The conversational terminal interface.
+
+endmenu

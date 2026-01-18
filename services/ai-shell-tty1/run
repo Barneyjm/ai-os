@@ -1,0 +1,14 @@
+#!/bin/sh
+exec 2>&1
+
+TTY=/dev/tty1
+AGENT_SOCKET="/run/system-agent.sock"
+
+while [ ! -S "$AGENT_SOCKET" ]; do
+    sleep 1
+done
+
+clear > $TTY
+
+exec env TERM=linux AI_AGENT_SOCKET="$AGENT_SOCKET" \
+    setsid python3 /usr/lib/ai-os/ai_shell/shell.py < $TTY > $TTY 2>&1

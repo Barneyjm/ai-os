@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+
+# Models (too big for git - use LFS or download separately)
+models/*.gguf
+models/*.bin
+
+# Buildroot
+buildroot/
+output/
+
+# Runtime artifacts
+*.sock
+*.log
+*.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

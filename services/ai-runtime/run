@@ -1,0 +1,20 @@
+#!/bin/sh
+exec 2>&1
+
+MODEL_PATH="${AI_MODEL_PATH:-/models/system/default.gguf}"
+CTX_SIZE="${AI_CTX_SIZE:-8192}"
+GPU_LAYERS="${AI_GPU_LAYERS:-99}"
+
+while [ ! -f "$MODEL_PATH" ]; do
+    echo "Waiting for model at $MODEL_PATH…"
+    sleep 2
+done
+
+echo "Starting AI Runtime with model: $MODEL_PATH"
+
+exec /usr/bin/llama-server \
+    --model "$MODEL_PATH" \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --ctx-size "$CTX_SIZE" \
+    --n-gpu-layers "$GPU_LAYERS"

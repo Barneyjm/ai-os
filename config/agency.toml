@@ -1,0 +1,238 @@
+# AI-OS Agency Policy Configuration
+# Controls how autonomous the AI agent is across different domains
+#
+# Agency Levels:
+#   observe    - Watch and log, never act or suggest
+#   suggest    - Notify user of possible actions, don't act
+#   confirm    - Ask permission before acting
+#   auto       - Act automatically, notify user after
+#   autonomous - Act silently, no notification
+
+[defaults]
+level = "suggest"
+
+# How long to wait for confirmation before timing out (seconds)
+confirmation_timeout = 30
+
+# Allow AI to propose policy changes based on usage patterns
+suggest_policy_changes = true
+
+# Automatically adjust policy based on patterns (dangerous, off by default)
+auto_adjust_policy = false
+
+# =============================================================================
+# Domain-Specific Policies
+# =============================================================================
+
+[domains.filesystem]
+# Reading is generally safe
+read = "auto"
+list = "auto"
+search = "auto"
+
+# Writing depends on location
+write_user_files = "auto"          # ~/*, /tmp/*
+write_config_files = "confirm"     # ~/.config/*, /etc/*
+write_system_files = "confirm"     # /usr/*, /boot/*
+
+# Deletion is always cautious
+delete_user_files = "confirm"
+delete_system_files = "confirm"
+
+# Sensitive paths that always require confirmation regardless of above
+sensitive_paths = [
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "/boot",
+    "~/.ssh",
+    "~/.gnupg",
+]
+
+[domains.processes]
+# Observation
+list = "auto"
+monitor = "auto"
+
+# Resource management
+nice_adjustment = "auto"           # Adjust priority of runaway processes
+cgroup_limits = "suggest"          # Suggest memory/CPU limits
+
+# Process control
+kill_user_processes = "suggest"
+kill_system_processes = "confirm"
+kill_critical = "confirm"          # init, agent itself, etc.
+
+# Critical processes that require extra confirmation
+protected_processes = [
+    "init",
+    "systemd",
+    "ai-runtime",
+    "system-agent",
+    "sshd",
+]
+
+[domains.services]
+status = "auto"
+logs = "auto"
+
+start = "confirm"
+stop = "confirm"
+restart = "confirm"
+enable = "confirm"
+disable = "confirm"
+
+# Services that can be restarted without confirmation (user-added)
+auto_restart_allowed = []
+
+[domains.packages]
+search = "auto"
+info = "auto"
+
+install = "confirm"
+remove = "confirm"
+update = "confirm"
+
+# Security updates can be more autonomous
+security_updates = "auto"
+
+[domains.network]
+# Observation
+status = "auto"
+connections = "auto"
+dns_lookup = "auto"
+
+# Configuration
+interface_config = "confirm"
+firewall_rules = "confirm"
+hosts_file = "confirm"
+dns_config = "confirm"
+
+# Outbound requests on behalf of user
+http_requests = "auto"             # curl, wget, etc.
+download_files = "suggest"         # Large downloads
+
+[domains.users]
+# Info
+list = "auto"
+info = "auto"
+
+# Management
+create = "confirm"
+delete = "confirm"
+modify = "confirm"
+password = "confirm"
+sudo_config = "confirm"
+
+[domains.hardware]
+# Observation
+info = "auto"
+sensors = "auto"
+
+# Control
+brightness = "auto"
+volume = "auto"
+power_profile = "auto"
+
+# Mounting
+mount_known = "auto"               # Previously mounted devices
+mount_unknown = "suggest"          # New devices
+unmount = "auto"
+
+# Dangerous
+firmware = "confirm"
+disk_format = "confirm"
+
+[domains.system]
+# Info
+uptime = "auto"
+resources = "auto"
+logs = "auto"
+
+# Power
+suspend = "confirm"
+reboot = "confirm"
+shutdown = "confirm"
+
+# Time
+timezone = "confirm"
+ntp = "auto"
+
+[domains.predictions]
+# Speculative execution
+prelaunch_apps = true
+prefetch_data = true
+prerun_commands = false            # Too aggressive for most users
+
+# How confident the AI must be before speculative execution (0.0 - 1.0)
+confidence_threshold = 0.85
+
+# Max resources to spend on speculation
+max_speculative_memory_mb = 512
+max_speculative_cpu_percent = 10
+
+# =============================================================================
+# Profiles - Quick presets for different contexts
+# =============================================================================
+
+[profiles.default]
+description = "Balanced defaults for daily use"
+# Uses the settings above as-is
+
+[profiles.cautious]
+description = "Maximum confirmation, good for learning or sensitive work"
+defaults.level = "confirm"
+domains.filesystem.read = "auto"
+domains.filesystem.list = "auto"
+domains.processes.list = "auto"
+domains.predictions.prelaunch_apps = false
+domains.predictions.prefetch_data = false
+
+[profiles.focus]
+description = "Minimize interruptions, handle routine tasks silently"
+defaults.level = "auto"
+domains.filesystem.delete_user_files = "confirm"  # Still confirm deletes
+domains.system.reboot = "confirm"
+domains.system.shutdown = "confirm"
+
+[profiles.away]
+description = "Full autonomy while you're gone"
+defaults.level = "autonomous"
+domains.filesystem.delete_system_files = "confirm"  # Some guardrails
+domains.system.shutdown = "confirm"
+domains.users.delete = "confirm"
+
+[profiles.gaming]
+description = "Minimal AI activity, maximum resources to applications"
+defaults.level = "observe"
+domains.predictions.prelaunch_apps = false
+domains.predictions.prefetch_data = false
+# AI goes quiet, only intervenes for critical issues
+
+[profiles.presentation]
+description = "No interruptions, no suggestions, just stability"
+defaults.level = "observe"
+domains.hardware.brightness = "observe"  # Don't auto-adjust during presentation
+domains.predictions.prelaunch_apps = false
+
+# =============================================================================
+# Learning & Adaptation
+# =============================================================================
+
+[learning]
+# Track user responses to suggestions/confirmations
+track_responses = true
+
+# After N identical approvals, suggest policy upgrade
+approval_threshold = 5
+
+# After N identical denials, suggest policy downgrade
+denial_threshold = 3
+
+# Actions to never auto-learn (always require explicit policy change)
+no_auto_learn = [
+    "filesystem.delete",
+    "users.*",
+    "system.shutdown",
+    "system.reboot",
+]

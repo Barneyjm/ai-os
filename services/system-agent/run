@@ -1,0 +1,12 @@
+#!/bin/sh
+exec 2>&1
+
+RUNTIME_SOCKET="/run/ai-runtime.sock"
+while [ ! -S "$RUNTIME_SOCKET" ]; do
+    echo "Waiting for AI runtime…"
+    sleep 1
+done
+
+echo "Starting System Agent…"
+cd /usr/lib/ai-os
+exec python3 -m system_agent.agent

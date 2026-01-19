@@ -53,17 +53,17 @@ The AI reasons about *why* something failed and addresses root causes.
 
 ## The Real Answer
 
-**AI-OS is the SRE that executes your runbooks and can improvise.**
+**AI-OS handles the 3am alerts so your team can sleep well and have good days.**
 
 ```
 Traditional Stack:
-  Alert fires → PagerDuty → Human wakes up → Reads runbook → SSHs in → Diagnoses → Acts
+  Alert fires → PagerDuty → Human wakes up exhausted → Reads runbook → SSHs in → Diagnoses → Acts
 
 AI-OS:
-  Event fires → Agent reasons about context → Executes appropriate response → Logs audit trail
+  Event fires → Agent reasons about context → Executes appropriate response → Logs audit trail → Human reviews in the morning
 ```
 
-You might still use Prometheus for metrics and Ansible for initial provisioning. But AI-OS is the *reactive intelligence* layer that responds to events with judgment.
+You might still use Prometheus for metrics and Ansible for initial provisioning. But AI-OS is the *reactive intelligence* layer that handles routine issues autonomously, escalating to humans only when truly needed.
 
 ## Hybrid Approach
 
@@ -232,7 +232,7 @@ If policy is "confirm", it asks before acting. If policy is "auto", it acts and 
 | Initial server provisioning | Ansible/Puppet |
 | Fleet-wide config management | Ansible/Puppet |
 | Metrics collection & dashboards | Prometheus/Grafana |
-| Responding to alerts at 3am | **AI-OS** |
+| Handling alerts while you sleep | **AI-OS** |
 | Novel/unexpected situations | **AI-OS** |
 | Single server / small scale | **AI-OS** |
 | Learning user preferences | **AI-OS** |
@@ -241,8 +241,9 @@ If policy is "confirm", it asks before acting. If policy is "auto", it acts and 
 
 ## Summary
 
-AI-OS isn't trying to replace Puppet or Prometheus. It's trying to replace the human who gets paged at 3am, reads the runbook, and makes judgment calls.
+AI-OS isn't trying to replace Puppet or Prometheus. It's trying to let your team sleep through the night and come to work rested.
 
 The value proposition:
-- **Small scale**: Replace the entire stack with one intelligent agent
+- **Quality of life**: No more 3am pages for routine issues—AI handles them, you review in the morning
+- **Small scale**: One intelligent agent instead of a complex toolchain
 - **Large scale**: Add AI-OS as the "reactive intelligence" layer on top of existing tools

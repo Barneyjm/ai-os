@@ -1,0 +1,4 @@
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$SCRIPT_DIR/system-agent:$SCRIPT_DIR/ai-shell:$PYTHONPATH"
+exec "$SCRIPT_DIR/venv/bin/python" "$SCRIPT_DIR/system-agent/agent.py" "$@"

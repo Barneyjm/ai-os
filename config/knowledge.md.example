@@ -1,0 +1,54 @@
+# AI-OS Custom Knowledge Base
+#
+# Copy this file to ~/.ai-os/knowledge.md to customize the agent's knowledge.
+# Or set AI_KNOWLEDGE_PATH environment variable to point to your file.
+#
+# This file is included in the system prompt, so the agent will use this
+# information when making decisions. Add your own:
+# - Server-specific procedures
+# - Custom application knowledge
+# - Site-specific conventions
+# - Troubleshooting tips for your environment
+
+## My Environment
+
+# Example: Document your specific setup
+# - Web server: nginx on port 8080 (behind cloudflare)
+# - Database: PostgreSQL 15 on localhost:5432
+# - App: Python/FastAPI in /opt/myapp, managed by systemd unit myapp.service
+# - Backups: Daily to /mnt/backup at 2am via cron
+
+## Custom Procedures
+
+### Deploying Updates
+# 1. Pull latest: cd /opt/myapp && git pull
+# 2. Install deps: pip install -r requirements.txt
+# 3. Run migrations: python manage.py migrate
+# 4. Restart: systemctl restart myapp
+
+### When Disk Gets Full
+# Priority cleanup order:
+# 1. /var/log/myapp/*.log.* (old rotated logs)
+# 2. /tmp/uploads older than 7 days
+# 3. Docker images: docker system prune
+
+## Known Issues
+
+### myapp high memory
+# This app has a known memory leak. If it exceeds 2GB:
+# 1. Check /var/log/myapp/app.log for errors
+# 2. Restart is safe during off-hours
+# 3. During business hours, alert on-call first
+
+### nginx 502 errors
+# Usually means myapp is down or overloaded:
+# 1. Check: systemctl status myapp
+# 2. Check: journalctl -u myapp -n 50
+# 3. If OOM killed, increase memory limit and restart
+
+## Contacts
+
+# For escalation outside AI capabilities:
+# - Infrastructure: ops@example.com
+# - Application: dev@example.com
+# - Security: security@example.com

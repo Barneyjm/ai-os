@@ -1,0 +1,23 @@
+Source: meerai
+Section: admin
+Priority: optional
+Maintainer: MeerAI Team <meerai@example.com>
+Build-Depends: debhelper-compat (= 13), python3 (>= 3.10), python3-venv, python3-pip
+Standards-Version: 4.6.0
+Homepage: https://github.com/Barneyjm/ai-os
+Vcs-Browser: https://github.com/Barneyjm/ai-os
+Vcs-Git: https://github.com/Barneyjm/ai-os.git
+
+Package: meerai
+Architecture: all
+Depends: ${misc:Depends}, python3 (>= 3.10), python3-venv
+Description: MeerAI - Your AI that watches while you rest
+ MeerAI is an AI-powered system agent that monitors your infrastructure
+ and handles routine tasks autonomously, so you can sleep through the night.
+ .
+ Features:
+  - Proactive system monitoring with configurable triggers
+  - Policy-controlled autonomy levels (observe, suggest, confirm, auto)
+  - Natural language interface for system administration
+  - Audit logging of all actions
+  - Integration with existing tools (Prometheus, systemd, etc.)

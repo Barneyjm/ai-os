@@ -1,0 +1,30 @@
+[Unit]
+Description=MeerAI System Agent
+Documentation=https://github.com/Barneyjm/ai-os
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/meerai/venv/bin/python /opt/meerai/system-agent/agent.py
+WorkingDirectory=/opt/meerai
+Environment=PYTHONPATH=/opt/meerai/system-agent:/opt/meerai/ai-shell
+Environment=AI_POLICY_CONFIG=/etc/meerai/agency.toml
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/log/meerai /etc/meerai
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meerai-agent
+
+[Install]
+WantedBy=multi-user.target

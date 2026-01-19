@@ -13,16 +13,18 @@ ai-os/
 ├── system-agent/           # Core AI agent
 │   ├── agent.py            # Main agent, tools, inference clients
 │   ├── policy.py           # Agency policy system
+│   ├── events.py           # Event system for proactive triggers
 │   └── requirements.txt
 ├── ai-shell/               # Terminal interface
 │   ├── shell.py            # Conversational shell
 │   └── requirements.txt
 ├── config/
-│   └── agency.toml         # Agency policy configuration
+│   └── agency.toml         # Agency policy + event trigger configuration
 ├── tests/                  # Test suite
 │   ├── conftest.py         # Shared fixtures
 │   ├── test_policy.py      # Policy module tests
 │   ├── test_agent.py       # Agent module tests
+│   ├── test_events.py      # Event system tests
 │   └── test_shell.py       # Shell module tests
 ├── services/               # runit service definitions
 ├── docs/                   # Documentation
@@ -51,10 +53,19 @@ Controls AI autonomy across domains:
 - **AnthropicInferenceClient**: Anthropic Messages API client
 - **SystemAgent**: Main agent orchestrating tools and policy
 
+### Event System (`system-agent/events.py`)
+
+Provides proactive agency through automatic triggers:
+- **EventType**: FILE_CREATED, FILE_MODIFIED, SCHEDULE, LOW_DISK_SPACE, etc.
+- **Event**: Represents something that happened with timestamp and data
+- **EventTrigger**: Defines when to fire (file patterns, schedules, thresholds)
+- **EventManager**: Coordinates file watchers, schedulers, and system monitors
+- **AgentEventHandler**: Routes events to the SystemAgent for processing
+
 ### AI Shell (`ai-shell/shell.py`)
 
 - **AgentClient**: HTTP/Unix socket client to agent
-- **Builtin commands**: /help, /profile, /policy, /reset, /exit
+- **Builtin commands**: /help, /profile, /policy, /events, /reset, /exit
 
 ## Development Setup
 
@@ -78,11 +89,58 @@ pytest tests/test_policy.py -v
 |----------|-------------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API key | (none) |
 | `ANTHROPIC_BASE_URL` | Anthropic API base URL | https://api.anthropic.com |
+| `OPENAI_API_KEY` | OpenAI-compatible API key (Fireworks, OpenAI, etc.) | (none) |
 | `AI_INFERENCE_BACKEND` | "anthropic" or "openai" | auto-detect |
 | `AI_MODEL_NAME` | Model to use | claude-sonnet-4-20250514 |
 | `AI_RUNTIME_URL` | OpenAI-compatible URL | (none) |
 | `AI_DEV_MODE` | Enable HTTP server mode | (disabled) |
 | `AI_POLICY_CONFIG` | Path to agency.toml | (auto-detect) |
+
+### Backend Configuration Examples
+
+**Anthropic (Claude)**:
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export AI_MODEL_NAME="claude-sonnet-4-20250514"
+```
+
+**Fireworks AI**:
+```bash
+export OPENAI_API_KEY="fw_..."
+export AI_RUNTIME_URL="https://api.fireworks.ai/inference/v1"
+export AI_MODEL_NAME="accounts/fireworks/models/llama-v3p1-70b-instruct"
+```
+
+**OpenAI**:
+```bash
+export OPENAI_API_KEY="sk-..."
+export AI_RUNTIME_URL="https://api.openai.com/v1"
+export AI_MODEL_NAME="gpt-4o"
+```
+
+**Local llama.cpp** (no auth):
+```bash
+export AI_RUNTIME_URL="http://localhost:8080"
+export AI_MODEL_NAME="llama-3-8b"
+```
+
+### Custom Knowledge Base
+
+The agent includes built-in sysadmin knowledge (commands, troubleshooting heuristics, safety guidelines). Customize it by creating `~/.ai-os/knowledge.md`:
+
+```bash
+# Copy the example
+cp config/knowledge.md.example ~/.ai-os/knowledge.md
+
+# Or set custom path
+export AI_KNOWLEDGE_PATH="/path/to/my/knowledge.md"
+```
+
+Your custom knowledge file completely replaces the built-in knowledge, so include everything the agent should know about your environment:
+- Server-specific procedures
+- Application deployment steps
+- Known issues and workarounds
+- Escalation contacts
 
 ## Testing Guidelines
 
@@ -226,6 +284,93 @@ def test_get_policy_new_domain(self, temp_config_file):
     assert decision.level == AgencyLevel.AUTO
 ```
 
+### Adding Event Triggers
+
+Event triggers enable proactive AI behavior. Add them to `config/agency.toml`:
+
+**File Watcher Trigger**:
+```toml
+[[events.triggers]]
+id = "downloads-organizer"
+enabled = true
+event_types = ["file_created"]
+watch_path = "~/Downloads"
+file_patterns = ["*.pdf", "*.zip"]
+ignore_patterns = [".*", "*.tmp"]
+cooldown_seconds = 30
+prompt = "A new file was downloaded. Suggest where to organize it."
+```
+
+**Scheduled Trigger**:
+```toml
+[[events.triggers]]
+id = "daily-summary"
+enabled = true
+event_types = ["schedule"]
+schedule = "@daily"  # or "0 9 * * *" for 9am, "@every_5m", etc.
+prompt = "Provide a daily system health summary."
+```
+
+**System Monitor Trigger**:
+```toml
+[[events.triggers]]
+id = "disk-warning"
+enabled = true
+event_types = ["low_disk_space"]
+watch_path = "/"
+threshold = 90.0  # Trigger when >90% used
+cooldown_seconds = 3600
+prompt = "Disk space is low. Suggest cleanup actions."
+```
+
+**Peripheral Event Triggers**:
+```toml
+# USB device connected (filter by device type)
+[[events.triggers]]
+id = "usb-storage-handler"
+enabled = true
+event_types = ["usb_connected"]
+device_types = ["mass_storage"]  # Filter: mass_storage, hid, audio, video, etc.
+cooldown_seconds = 10
+prompt = "A USB storage device was connected. List its contents."
+
+# Network connection changes (filter by interface)
+[[events.triggers]]
+id = "wifi-monitor"
+enabled = true
+event_types = ["network_connected", "network_disconnected"]
+interface_patterns = ["wlan*", "wlp*"]  # Only WiFi interfaces
+cooldown_seconds = 30
+prompt = "WiFi connection changed. Check connectivity status."
+
+# Power/battery events
+[[events.triggers]]
+id = "low-battery-handler"
+enabled = true
+event_types = ["power_low_battery"]
+threshold = 20.0  # Battery percentage
+cooldown_seconds = 300
+prompt = "Battery is low. Suggest power-saving actions."
+```
+
+**Peripheral Event Types**:
+- USB: `usb_connected`, `usb_disconnected`
+- Network: `network_connected`, `network_disconnected`, `network_changed`
+- Power: `power_ac_connected`, `power_ac_disconnected`, `power_low_battery`
+- Bluetooth: `bluetooth_connected`, `bluetooth_disconnected`
+- Display: `display_connected`, `display_disconnected`
+- Audio: `audio_device_connected`, `audio_device_disconnected`
+
+**Schedule Syntax**:
+- `@daily`, `@hourly`, `@weekly`, `@monthly`
+- `@every_5m`, `@every_1h`, `@every_30s`
+- Cron: `*/5 * * * *` (every 5 minutes)
+
+**Shell Commands**:
+- `/events` - Show event system status and triggers
+- `/events enable ID` - Enable a trigger
+- `/events disable ID` - Disable a trigger
+
 ## CI/CD Pipeline
 
 GitHub Actions runs on push/PR to main:
@@ -274,6 +419,29 @@ User Input → AI Shell → System Agent → Inference Client → LLM
          Response → AI Shell → User
 ```
 
+### Event System Flow
+```
+                    ┌─────────────────┐
+                    │  Event Manager  │
+                    └────────┬────────┘
+         ┌──────────┬────────┼────────┬──────────┐
+         ▼          ▼        ▼        ▼          ▼
+   File Watcher  Scheduler  System   Peripheral
+   (watchdog)   (cron-like) Monitor   Monitor
+                           (CPU/mem) (USB/net/power)
+         │          │        │        │
+         └──────────┴────────┼────────┘
+                             ▼
+                       Event Queue
+                             ▼
+                    AgentEventHandler
+                             ▼
+                      SystemAgent
+                    (process_message)
+                             ▼
+                     LLM + Tool Use
+```
+
 ### Tool Schema Formats
 
 **OpenAI format** (for llama.cpp, OpenAI, etc.):
@@ -316,3 +484,44 @@ All inference clients return OpenAI-compatible responses:
 ```
 
 This allows the SystemAgent to work with any backend uniformly.
+
+## Future Enhancements
+
+### Event-Driven Peripheral Monitoring
+Current peripheral monitoring uses polling (2s interval). Future versions could add event-driven backends:
+- **pyudev**: Netlink-based USB/device events (instant, no polling)
+- **pyroute2**: RTNETLINK for network interface events
+- **D-Bus**: UPower (battery), NetworkManager, BlueZ (Bluetooth)
+- **acpid**: Power button, lid close, AC plug events
+
+### Headless/IoT Deployment
+AI-OS is well-suited for headless systems (Raspberry Pi, servers, appliances):
+- Remote inference via API (Fireworks, OpenAI, Anthropic)
+- Lightweight local footprint (agent + tools only)
+- Proactive management without human intervention
+- Policy-controlled autonomy levels
+
+**Example use cases**:
+- Home server: Auto-restart services, manage backups, intrusion alerts
+- Media center: Organize downloads, transcode when idle
+- Network appliance: React to devices, manage firewall rules
+- IoT hub: Process sensor data, alert on anomalies, rotate storage
+
+### Persistent Memory
+- Remember user preferences across sessions
+- Learn from past actions and outcomes
+- Build context about the system over time
+
+### Workflow Learning
+- Observe repeated manual actions
+- Suggest automation for common patterns
+- Create new triggers based on user behavior
+
+### Expanded Tool Library (Runbook-Inspired)
+See `docs/devops-comparison.md` for full roadmap. Priority additions:
+- **User management**: user_create, ssh_key_add, sudo_grant
+- **Network/Firewall**: firewall_allow, firewall_deny, port_check
+- **Logs**: log_tail, log_search, journal_query
+- **Resources**: memory_clear_cache, disk_cleanup, process_nice
+- **Security**: permission_check, updates_check, fail2ban_status
+- **Containers**: container_list, container_restart, container_logs

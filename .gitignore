@@ -21,6 +21,8 @@ output/
 *.log
 *.pid
 
+.claude/
+
 # IDE
 .vscode/
 .idea/

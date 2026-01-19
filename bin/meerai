@@ -1,0 +1,8 @@
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Default to shell if no args, otherwise pass to agent
+if [[ $# -eq 0 ]]; then
+    exec "$SCRIPT_DIR/bin/meerai-shell"
+else
+    exec "$SCRIPT_DIR/bin/meerai-agent" "$@"
+fi

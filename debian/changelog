@@ -1,0 +1,10 @@
+meerai (0.1.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Core system agent with tool execution
+  * AI shell interface
+  * Event system with file watching, scheduling, and system monitoring
+  * Policy-controlled autonomy levels
+  * Audit logging
+
+ -- MeerAI Team <meerai@example.com>  Sun, 19 Jan 2025 00:00:00 +0000

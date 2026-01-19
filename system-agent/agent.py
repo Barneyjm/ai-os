@@ -37,6 +37,8 @@ class AgentConfig:
     consent_timeout: int = 30
     log_level: str = "INFO"
     policy_config: Optional[str] = None
+    # OpenAI-compatible API settings (Fireworks, OpenAI, etc.)
+    openai_api_key: str = ""
     # Anthropic-specific settings
     anthropic_api_key: str = ""
     anthropic_base_url: str = "https://api.anthropic.com"
@@ -45,15 +47,30 @@ class AgentConfig:
     @classmethod
     def from_env(cls) -> "AgentConfig":
         """Create config from environment variables."""
+        # Determine backend: explicit setting > auto-detect from keys
+        explicit_backend = os.environ.get("AI_INFERENCE_BACKEND", "")
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+
+        if explicit_backend:
+            backend = explicit_backend
+        elif anthropic_key:
+            backend = "anthropic"
+        elif openai_key:
+            backend = "openai"
+        else:
+            backend = "openai"  # Default to OpenAI-compatible (local llama.cpp)
+
         return cls(
             runtime_socket=os.environ.get("AI_RUNTIME_SOCKET", "/run/ai-runtime.sock"),
             runtime_url=os.environ.get("AI_RUNTIME_URL", ""),
             agent_socket=os.environ.get("AI_AGENT_SOCKET", "/run/system-agent.sock"),
             model_name=os.environ.get("AI_MODEL_NAME", "claude-sonnet-4-20250514"),
             policy_config=os.environ.get("AI_POLICY_CONFIG"),
-            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            openai_api_key=openai_key,
+            anthropic_api_key=anthropic_key,
             anthropic_base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-            inference_backend=os.environ.get("AI_INFERENCE_BACKEND", "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"),
+            inference_backend=backend,
         )
 
 
@@ -457,11 +474,23 @@ class ToolRegistry:
 
 
 class InferenceClient:
-    """Client for communicating with OpenAI-compatible inference runtimes."""
+    """Client for communicating with OpenAI-compatible inference runtimes.
+
+    Supports local llama.cpp (no auth), Fireworks AI, OpenAI, and other
+    OpenAI-compatible APIs that use Bearer token authentication.
+    """
 
     def __init__(self, config: AgentConfig):
         self.config = config
         self.use_http = bool(config.runtime_url)
+        self.logger = logging.getLogger("openai-client")
+
+    def _get_headers(self) -> dict:
+        """Build request headers, including auth if API key is set."""
+        headers = {"Content-Type": "application/json"}
+        if self.config.openai_api_key:
+            headers["Authorization"] = f"Bearer {self.config.openai_api_key}"
+        return headers
 
     async def complete(
         self,
@@ -483,13 +512,18 @@ class InferenceClient:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
+        headers = self._get_headers()
+
         if self.use_http:
-            # HTTP mode (development)
+            # HTTP mode (cloud APIs or local dev server)
+            url = f"{self.config.runtime_url}/v1/chat/completions"
+            self.logger.debug(f"Sending request to {url}")
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.config.runtime_url}/v1/chat/completions",
-                    json=payload
-                ) as resp:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        self.logger.error(f"API error {resp.status}: {error_text}")
+                        raise Exception(f"API error {resp.status}: {error_text}")
                     return await resp.json()
         else:
             # Unix socket mode (production)
@@ -497,7 +531,8 @@ class InferenceClient:
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(
                     "http://localhost/v1/chat/completions",
-                    json=payload
+                    json=payload,
+                    headers=headers
                 ) as resp:
                     return await resp.json()
 
@@ -716,6 +751,7 @@ class SystemAgent:
         self.policy = AgencyPolicy(policy_path)
 
         self.pending_notifications: dict[str, list] = {}
+        self.pending_confirmations: dict[str, dict] = {}
 
         self.logger.info(f"Using {config.inference_backend} backend with model {config.model_name}")
 
@@ -747,9 +783,16 @@ You have access to these capabilities: filesystem operations, process management
         session_id: str,
         user_message: str,
         confirm_callback: Callable[[Action, PolicyDecision], bool] = None,
-        notify_callback: Callable[[Action, str], None] = None
+        notify_callback: Callable[[Action, str], None] = None,
+        confirmations: dict = None
     ) -> dict:
-        """Process a user message and return the agent's response."""
+        """Process a user message and return the agent's response.
+
+        Args:
+            confirmations: Dict mapping action_id to bool for pre-approved/denied actions.
+                          Used by HTTP API for two-phase confirmation flow.
+        """
+        confirmations = confirmations or {}
 
         if session_id not in self.conversations:
             self.conversations[session_id] = [
@@ -759,12 +802,23 @@ You have access to these capabilities: filesystem operations, process management
         if session_id not in self.pending_notifications:
             self.pending_notifications[session_id] = []
 
+        if session_id not in self.pending_confirmations:
+            self.pending_confirmations[session_id] = {}
+
         messages = self.conversations[session_id]
-        messages.append({"role": "user", "content": user_message})
+
+        # Only add user message if this isn't a confirmation continuation
+        if user_message and not confirmations:
+            messages.append({"role": "user", "content": user_message})
 
         if not confirm_callback:
             async def default_confirm(action, decision):
-                return True
+                # Check if we have a pre-set confirmation for this action
+                action_id = f"{action.domain}.{action.operation}.{hash(action.target) % 10000}"
+                if action_id in confirmations:
+                    return confirmations[action_id]
+                # No pre-set confirmation - need to ask user
+                return None  # Signal that we need to pause for confirmation
             confirm_callback = default_confirm
 
         if not notify_callback:
@@ -829,9 +883,43 @@ You have access to these capabilities: filesystem operations, process management
 
                         case AgencyLevel.CONFIRM:
                             import time
+                            action_id = f"{action.domain}.{action.operation}.{hash(action.target) % 10000}"
+
                             start = time.time()
                             approved = await confirm_callback(action, decision)
                             response_time = int((time.time() - start) * 1000)
+
+                            if approved is None:
+                                # Need to pause and ask user - return pending confirmation
+                                # Store state for resumption
+                                self.pending_confirmations[session_id] = {
+                                    "action_id": action_id,
+                                    "tool_name": tool_name,
+                                    "tool_args": tool_args,
+                                    "tool_call_id": tool_call["id"],
+                                    "action": {
+                                        "domain": action.domain,
+                                        "operation": action.operation,
+                                        "target": action.target,
+                                        "description": action.description
+                                    },
+                                    "decision": {
+                                        "level": str(decision.level),
+                                        "reason": decision.reason
+                                    }
+                                }
+                                return {
+                                    "pending_confirmation": True,
+                                    "action_id": action_id,
+                                    "action": {
+                                        "domain": action.domain,
+                                        "operation": action.operation,
+                                        "target": action.target,
+                                        "description": action.description
+                                    },
+                                    "reason": decision.reason,
+                                    "notifications": self.pending_notifications.get(session_id, [])
+                                }
 
                             self.policy.record_response(action, decision, approved, response_time)
 
@@ -868,6 +956,54 @@ You have access to these capabilities: filesystem operations, process management
                 if messages and messages[0]["role"] == "system":
                     messages[0]["content"] = self._get_system_prompt()
         return success
+
+    async def resume_after_confirmation(
+        self,
+        session_id: str,
+        approved: bool,
+        notify_callback: Callable[[Action, str], None] = None
+    ) -> dict:
+        """Resume processing after user confirms/denies a pending action."""
+        pending = self.pending_confirmations.get(session_id)
+        if not pending:
+            return {"error": "No pending confirmation for this session"}
+
+        # Clear the pending confirmation
+        del self.pending_confirmations[session_id]
+
+        if not notify_callback:
+            def default_notify(action, msg):
+                self.pending_notifications[session_id].append({
+                    "action": action.description,
+                    "message": msg,
+                    "timestamp": datetime.now().isoformat()
+                })
+            notify_callback = default_notify
+
+        messages = self.conversations.get(session_id, [])
+        tool = self.tools.tools.get(pending["tool_name"])
+
+        if not tool:
+            result = {"error": f"Unknown tool: {pending['tool_name']}"}
+        elif approved:
+            result = await tool.handler(**pending["tool_args"])
+            action = tool.to_action(**pending["tool_args"])
+            notify_callback(action, f"Completed: {action.description}")
+        else:
+            result = {
+                "policy": "denied",
+                "message": f"User denied: {pending['action']['description']}"
+            }
+
+        # Add the tool result to conversation
+        messages.append({
+            "role": "tool",
+            "tool_call_id": pending["tool_call_id"],
+            "content": json.dumps(result)
+        })
+
+        # Continue processing (let the LLM respond to the result)
+        return await self.process_message(session_id, "", confirmations={})
 
     def get_policy_summary(self) -> dict:
         """Get a summary of current policy settings."""
@@ -978,11 +1114,22 @@ async def create_http_server(agent: SystemAgent, host: str = "127.0.0.1", port: 
         data = await request.json()
         session_id = data.get("session_id", "default")
         message = data.get("message", "")
+        confirmations = data.get("confirmations", {})
 
-        async def confirm(action: Action, decision: PolicyDecision) -> bool:
-            return True
+        # Use default confirm callback which checks confirmations dict
+        # and returns None if confirmation is needed
+        result = await agent.process_message(
+            session_id, message, confirmations=confirmations
+        )
+        return web.json_response(result)
 
-        result = await agent.process_message(session_id, message, confirm)
+    async def handle_confirm(request: web.Request) -> web.Response:
+        """Handle confirmation response from user."""
+        data = await request.json()
+        session_id = data.get("session_id", "default")
+        approved = data.get("approved", False)
+
+        result = await agent.resume_after_confirmation(session_id, approved)
         return web.json_response(result)
 
     async def handle_profile_list(request: web.Request) -> web.Response:
@@ -1018,6 +1165,7 @@ async def create_http_server(agent: SystemAgent, host: str = "127.0.0.1", port: 
 
     app = web.Application()
     app.router.add_post("/chat", handle_chat)
+    app.router.add_post("/confirm", handle_confirm)
     app.router.add_get("/profiles", handle_profile_list)
     app.router.add_post("/profiles/set", handle_profile_set)
     app.router.add_post("/policy/check", handle_policy_check)

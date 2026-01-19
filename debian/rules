@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Create virtual environment and install
+	python3 -m venv debian/meerai/opt/meerai/venv
+	debian/meerai/opt/meerai/venv/bin/pip install --upgrade pip
+	debian/meerai/opt/meerai/venv/bin/pip install .
+
+override_dh_auto_install:
+	# Install application files
+	install -d debian/meerai/opt/meerai
+	cp -r system-agent debian/meerai/opt/meerai/
+	cp -r ai-shell debian/meerai/opt/meerai/
+	cp -r config debian/meerai/opt/meerai/
+	cp -r bin debian/meerai/opt/meerai/
+
+	# Install wrapper scripts (symlinks to /opt/meerai/bin)
+	install -d debian/meerai/usr/bin
+	ln -sf /opt/meerai/bin/meerai debian/meerai/usr/bin/meerai
+	ln -sf /opt/meerai/bin/meerai-agent debian/meerai/usr/bin/meerai-agent
+	ln -sf /opt/meerai/bin/meerai-shell debian/meerai/usr/bin/meerai-shell
+
+	# Install systemd unit
+	install -d debian/meerai/lib/systemd/system
+	install -m 644 services/meerai-agent.service debian/meerai/lib/systemd/system/
+
+	# Install default config
+	install -d debian/meerai/etc/meerai
+	install -m 644 config/agency.toml debian/meerai/etc/meerai/
+
+override_dh_auto_clean:
+	rm -rf debian/meerai/opt/meerai/venv

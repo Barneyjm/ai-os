@@ -455,6 +455,178 @@ class TestCreateInferenceClient:
             create_inference_client(config)
 
 
+class TestConfirmationFlow:
+    """Tests for the confirmation flow in SystemAgent."""
+
+    @pytest.fixture
+    def agent_with_policy(self, mock_agent_config, temp_config_file):
+        """Create agent with policy config."""
+        mock_agent_config.policy_config = str(temp_config_file)
+        return SystemAgent(mock_agent_config)
+
+    @pytest.mark.asyncio
+    async def test_confirm_callback_returns_none_pauses_execution(self, agent_with_policy):
+        """Should return pending_confirmation when callback returns None."""
+        from policy import AgencyLevel
+
+        # Create a mock inference response that triggers a tool call
+        mock_response = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "I'll delete that file.",
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "function": {
+                            "name": "run_command",
+                            "arguments": '{"command": "rm /tmp/test"}'
+                        }
+                    }]
+                }
+            }]
+        }
+
+        agent_with_policy.inference.complete = AsyncMock(return_value=mock_response)
+
+        # Use a callback that returns None (needs confirmation)
+        async def confirm_callback(action, decision):
+            return None
+
+        result = await agent_with_policy.process_message(
+            "test-session",
+            "delete /tmp/test",
+            confirm_callback=confirm_callback
+        )
+
+        assert result.get("pending_confirmation") is True
+        assert "action_id" in result
+        assert "action" in result
+        assert result["action"]["domain"] == "processes"
+        assert result["action"]["operation"] == "run_command"
+
+    @pytest.mark.asyncio
+    async def test_resume_after_confirmation_approved(self, agent_with_policy):
+        """Should execute action when confirmation is approved."""
+        # First, set up a pending confirmation
+        agent_with_policy.pending_confirmations["test-session"] = {
+            "action_id": "processes.run_command.1234",
+            "tool_name": "run_command",
+            "tool_args": {"command": "echo hello"},
+            "tool_call_id": "call_123",
+            "action": {
+                "domain": "processes",
+                "operation": "run_command",
+                "target": "echo hello",
+                "description": "run_command: echo hello"
+            },
+            "decision": {
+                "level": "confirm",
+                "reason": "Policy requires confirmation"
+            }
+        }
+
+        # Set up conversation
+        agent_with_policy.conversations["test-session"] = [
+            {"role": "system", "content": "You are a system agent."},
+            {"role": "user", "content": "run echo hello"},
+            {
+                "role": "assistant",
+                "content": "I'll run that command.",
+                "tool_calls": [{
+                    "id": "call_123",
+                    "function": {
+                        "name": "run_command",
+                        "arguments": '{"command": "echo hello"}'
+                    }
+                }]
+            }
+        ]
+
+        # Mock the inference to return a final response
+        mock_response = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Command executed successfully."
+                }
+            }]
+        }
+        agent_with_policy.inference.complete = AsyncMock(return_value=mock_response)
+
+        result = await agent_with_policy.resume_after_confirmation("test-session", approved=True)
+
+        # Should have cleared the pending confirmation
+        assert "test-session" not in agent_with_policy.pending_confirmations
+        # Should have a response
+        assert "response" in result
+
+    @pytest.mark.asyncio
+    async def test_resume_after_confirmation_denied(self, agent_with_policy):
+        """Should not execute action when confirmation is denied."""
+        # Set up a pending confirmation
+        agent_with_policy.pending_confirmations["test-session"] = {
+            "action_id": "processes.run_command.1234",
+            "tool_name": "run_command",
+            "tool_args": {"command": "rm -rf /"},
+            "tool_call_id": "call_123",
+            "action": {
+                "domain": "processes",
+                "operation": "run_command",
+                "target": "rm -rf /",
+                "description": "run_command: rm -rf /"
+            },
+            "decision": {
+                "level": "confirm",
+                "reason": "Policy requires confirmation"
+            }
+        }
+
+        agent_with_policy.conversations["test-session"] = [
+            {"role": "system", "content": "You are a system agent."},
+            {"role": "user", "content": "delete everything"},
+            {
+                "role": "assistant",
+                "content": "I'll delete that.",
+                "tool_calls": [{
+                    "id": "call_123",
+                    "function": {
+                        "name": "run_command",
+                        "arguments": '{"command": "rm -rf /"}'
+                    }
+                }]
+            }
+        ]
+
+        # Mock the inference to return a final response
+        mock_response = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Action was denied by user."
+                }
+            }]
+        }
+        agent_with_policy.inference.complete = AsyncMock(return_value=mock_response)
+
+        result = await agent_with_policy.resume_after_confirmation("test-session", approved=False)
+
+        # Check that the tool result indicates denial
+        messages = agent_with_policy.conversations["test-session"]
+        tool_result = json.loads(messages[-1]["content"])
+        assert tool_result["policy"] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_resume_without_pending_confirmation(self, agent_with_policy):
+        """Should return error when no pending confirmation."""
+        result = await agent_with_policy.resume_after_confirmation("nonexistent-session", approved=True)
+        assert "error" in result
+
+    def test_pending_confirmations_initialized(self, agent_with_policy):
+        """Should initialize pending_confirmations dict."""
+        assert hasattr(agent_with_policy, "pending_confirmations")
+        assert isinstance(agent_with_policy.pending_confirmations, dict)
+
+
 class TestSystemAgent:
     """Tests for SystemAgent class."""
 

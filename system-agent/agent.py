@@ -21,9 +21,6 @@ import aiohttp
 from aiohttp import web, UnixConnector
 
 from policy import AgencyPolicy, AgencyLevel, Action, PolicyDecision
-from events import EventManager, EventType, Event, EventTrigger, AgentEventHandler
-from audit import get_audit_logger, AuditAction
-from knowledge import get_knowledge
 
 # =============================================================================
 # Configuration
@@ -754,97 +751,14 @@ class SystemAgent:
         self.policy = AgencyPolicy(policy_path)
 
         self.pending_notifications: dict[str, list] = {}
-
-        # Event system for proactive triggers
-        self.event_manager = EventManager()
-        self._setup_event_system()
-
-        # Audit logging
-        self.audit = get_audit_logger()
-        self.audit.log_agent_lifecycle(AuditAction.AGENT_STARTED, {
-            "backend": config.inference_backend,
-            "model": config.model_name
-        })
+        self.pending_confirmations: dict[str, dict] = {}
 
         self.logger.info(f"Using {config.inference_backend} backend with model {config.model_name}")
-
-    def _setup_event_system(self):
-        """Initialize the event system with triggers from config."""
-        # Load triggers from policy config if available
-        if self.policy.config:
-            self.event_manager.load_triggers_from_config(self.policy.config)
-
-        # Add handler that routes events to the agent
-        handler = AgentEventHandler(self._handle_event)
-        self.event_manager.add_handler(handler)
-
-    async def _handle_event(self, prompt: str, event: Event) -> dict:
-        """Handle an event by processing it as an agent message."""
-        # Use a dedicated session for event-triggered actions
-        session_id = f"event:{event.trigger_id or 'unknown'}"
-
-        # Get the trigger to check auto_approve setting
-        trigger = self.event_manager.triggers.get(event.trigger_id)
-
-        async def event_confirm(action: Action, decision: PolicyDecision) -> bool:
-            # If trigger has auto_approve, skip confirmation
-            if trigger and trigger.auto_approve:
-                return True
-            # Otherwise, log and deny (events can't get interactive confirmation)
-            self.logger.info(f"Event action requires confirmation (denied): {action.description}")
-            return False
-
-        def event_notify(action: Action, msg: str):
-            self.logger.info(f"Event notification: {msg}")
-            self.pending_notifications.setdefault("events", []).append({
-                "action": action.description,
-                "message": msg,
-                "event_type": event.event_type.value,
-                "timestamp": datetime.now().isoformat()
-            })
-
-        result = await self.process_message(
-            session_id=session_id,
-            user_message=prompt,
-            confirm_callback=event_confirm,
-            notify_callback=event_notify
-        )
-
-        return result
-
-    async def start_event_system(self):
-        """Start the event monitoring system."""
-        await self.event_manager.start()
-        self.logger.info("Event system started")
-
-    async def stop_event_system(self):
-        """Stop the event monitoring system."""
-        await self.event_manager.stop()
-        self.logger.info("Event system stopped")
-
-    def get_event_status(self) -> dict:
-        """Get the current status of the event system."""
-        return self.event_manager.get_status()
-
-    def register_event_trigger(self, trigger: EventTrigger):
-        """Register a new event trigger at runtime."""
-        self.event_manager.register_trigger(trigger)
-
-    def unregister_event_trigger(self, trigger_id: str):
-        """Remove an event trigger."""
-        self.event_manager.unregister_trigger(trigger_id)
-
-    async def emit_event(self, event: Event):
-        """Manually emit an event to trigger handlers."""
-        await self.event_manager.emit(event)
 
     def _get_system_prompt(self) -> str:
         profile_info = ""
         if self.policy.active_profile:
             profile_info = f"\nCurrent agency profile: {self.policy.active_profile}"
-
-        # Get situational knowledge (can be customized via ~/.ai-os/knowledge.md)
-        knowledge = get_knowledge(concise=False)
 
         return f"""You are the System Agent for an AI-first operating system. You have direct access to OS primitives through tools.
 
@@ -862,18 +776,23 @@ Guidelines:
 - Be proactive - if you notice something relevant while completing a task, mention it
 - If an action is denied by policy, explain what happened and suggest alternatives
 
-You have access to these capabilities: filesystem operations, process management, service control, package management, and system information. Use them freely to help the user.{profile_info}
-
-{knowledge}"""
+You have access to these capabilities: filesystem operations, process management, service control, package management, and system information. Use them freely to help the user.{profile_info}"""
 
     async def process_message(
         self,
         session_id: str,
         user_message: str,
         confirm_callback: Callable[[Action, PolicyDecision], bool] = None,
-        notify_callback: Callable[[Action, str], None] = None
+        notify_callback: Callable[[Action, str], None] = None,
+        confirmations: dict = None
     ) -> dict:
-        """Process a user message and return the agent's response."""
+        """Process a user message and return the agent's response.
+
+        Args:
+            confirmations: Dict mapping action_id to bool for pre-approved/denied actions.
+                          Used by HTTP API for two-phase confirmation flow.
+        """
+        confirmations = confirmations or {}
 
         if session_id not in self.conversations:
             self.conversations[session_id] = [
@@ -883,12 +802,23 @@ You have access to these capabilities: filesystem operations, process management
         if session_id not in self.pending_notifications:
             self.pending_notifications[session_id] = []
 
+        if session_id not in self.pending_confirmations:
+            self.pending_confirmations[session_id] = {}
+
         messages = self.conversations[session_id]
-        messages.append({"role": "user", "content": user_message})
+
+        # Only add user message if this isn't a confirmation continuation
+        if user_message and not confirmations:
+            messages.append({"role": "user", "content": user_message})
 
         if not confirm_callback:
             async def default_confirm(action, decision):
-                return True
+                # Check if we have a pre-set confirmation for this action
+                action_id = f"{action.domain}.{action.operation}.{hash(action.target) % 10000}"
+                if action_id in confirmations:
+                    return confirmations[action_id]
+                # No pre-set confirmation - need to ask user
+                return None  # Signal that we need to pause for confirmation
             confirm_callback = default_confirm
 
         if not notify_callback:
@@ -928,7 +858,6 @@ You have access to these capabilities: filesystem operations, process management
                 tool = self.tools.tools.get(tool_name)
                 if not tool:
                     result = {"error": f"Unknown tool: {tool_name}"}
-                    self.audit.log_tool_failed(session_id, tool_name, f"Unknown tool: {tool_name}")
                 else:
                     action = tool.to_action(**tool_args)
                     decision = self.policy.get_policy(action)
@@ -936,12 +865,6 @@ You have access to these capabilities: filesystem operations, process management
                     self.logger.info(
                         f"Policy decision: {decision.level} for {action.policy_key} "
                         f"(from {decision.source})"
-                    )
-
-                    # Audit the policy check
-                    self.audit.log_policy_check(
-                        session_id, action.domain, action.operation, action.target,
-                        str(decision.level), decision.source
                     )
 
                     match decision.level:
@@ -960,22 +883,48 @@ You have access to these capabilities: filesystem operations, process management
 
                         case AgencyLevel.CONFIRM:
                             import time
+                            action_id = f"{action.domain}.{action.operation}.{hash(action.target) % 10000}"
+
                             start = time.time()
                             approved = await confirm_callback(action, decision)
                             response_time = int((time.time() - start) * 1000)
 
+                            if approved is None:
+                                # Need to pause and ask user - return pending confirmation
+                                # Store state for resumption
+                                self.pending_confirmations[session_id] = {
+                                    "action_id": action_id,
+                                    "tool_name": tool_name,
+                                    "tool_args": tool_args,
+                                    "tool_call_id": tool_call["id"],
+                                    "action": {
+                                        "domain": action.domain,
+                                        "operation": action.operation,
+                                        "target": action.target,
+                                        "description": action.description
+                                    },
+                                    "decision": {
+                                        "level": str(decision.level),
+                                        "reason": decision.reason
+                                    }
+                                }
+                                return {
+                                    "pending_confirmation": True,
+                                    "action_id": action_id,
+                                    "action": {
+                                        "domain": action.domain,
+                                        "operation": action.operation,
+                                        "target": action.target,
+                                        "description": action.description
+                                    },
+                                    "reason": decision.reason,
+                                    "notifications": self.pending_notifications.get(session_id, [])
+                                }
+
                             self.policy.record_response(action, decision, approved, response_time)
 
-                            # Audit user decision
-                            self.audit.log_user_decision(
-                                session_id, approved, action.domain, action.operation,
-                                action.target, response_time
-                            )
-
                             if approved:
-                                result = await self._execute_tool_with_audit(
-                                    session_id, tool, tool_name, tool_args, action
-                                )
+                                result = await tool.handler(**tool_args)
                             else:
                                 result = {
                                     "policy": "denied",
@@ -983,15 +932,11 @@ You have access to these capabilities: filesystem operations, process management
                                 }
 
                         case AgencyLevel.AUTO:
-                            result = await self._execute_tool_with_audit(
-                                session_id, tool, tool_name, tool_args, action
-                            )
+                            result = await tool.handler(**tool_args)
                             notify_callback(action, f"Completed: {action.description}")
 
                         case AgencyLevel.AUTONOMOUS:
-                            result = await self._execute_tool_with_audit(
-                                session_id, tool, tool_name, tool_args, action
-                            )
+                            result = await tool.handler(**tool_args)
 
                 messages.append({
                     "role": "tool",
@@ -1003,49 +948,62 @@ You have access to these capabilities: filesystem operations, process management
             messages = messages[:1] + messages[-40:]
             self.conversations[session_id] = messages
 
-    async def _execute_tool_with_audit(
-        self,
-        session_id: str,
-        tool,
-        tool_name: str,
-        tool_args: dict,
-        action
-    ) -> dict:
-        """Execute a tool with full audit logging."""
-        import time
-
-        # Log invocation
-        self.audit.log_tool_invoked(
-            session_id, tool_name, tool_args,
-            action.domain, action.operation, action.target
-        )
-
-        start = time.time()
-        try:
-            result = await tool.handler(**tool_args)
-            duration_ms = int((time.time() - start) * 1000)
-
-            success = result.get("success", False) if isinstance(result, dict) else False
-            self.audit.log_tool_completed(session_id, tool_name, result, duration_ms, success)
-
-            return result
-
-        except Exception as e:
-            duration_ms = int((time.time() - start) * 1000)
-            self.audit.log_tool_failed(session_id, tool_name, str(e), duration_ms)
-            return {"success": False, "error": str(e)}
-
     def set_profile(self, profile_name: str) -> bool:
         """Change the active agency profile."""
-        old_profile = self.policy.active_profile
         success = self.policy.set_profile(profile_name)
         if success:
-            # Audit the profile change
-            self.audit.log_profile_changed("system", old_profile or "default", profile_name)
             for session_id, messages in self.conversations.items():
                 if messages and messages[0]["role"] == "system":
                     messages[0]["content"] = self._get_system_prompt()
         return success
+
+    async def resume_after_confirmation(
+        self,
+        session_id: str,
+        approved: bool,
+        notify_callback: Callable[[Action, str], None] = None
+    ) -> dict:
+        """Resume processing after user confirms/denies a pending action."""
+        pending = self.pending_confirmations.get(session_id)
+        if not pending:
+            return {"error": "No pending confirmation for this session"}
+
+        # Clear the pending confirmation
+        del self.pending_confirmations[session_id]
+
+        if not notify_callback:
+            def default_notify(action, msg):
+                self.pending_notifications[session_id].append({
+                    "action": action.description,
+                    "message": msg,
+                    "timestamp": datetime.now().isoformat()
+                })
+            notify_callback = default_notify
+
+        messages = self.conversations.get(session_id, [])
+        tool = self.tools.tools.get(pending["tool_name"])
+
+        if not tool:
+            result = {"error": f"Unknown tool: {pending['tool_name']}"}
+        elif approved:
+            result = await tool.handler(**pending["tool_args"])
+            action = tool.to_action(**pending["tool_args"])
+            notify_callback(action, f"Completed: {action.description}")
+        else:
+            result = {
+                "policy": "denied",
+                "message": f"User denied: {pending['action']['description']}"
+            }
+
+        # Add the tool result to conversation
+        messages.append({
+            "role": "tool",
+            "tool_call_id": pending["tool_call_id"],
+            "content": json.dumps(result)
+        })
+
+        # Continue processing (let the LLM respond to the result)
+        return await self.process_message(session_id, "", confirmations={})
 
     def get_policy_summary(self) -> dict:
         """Get a summary of current policy settings."""
@@ -1054,15 +1012,6 @@ You have access to these capabilities: filesystem operations, process management
             "available_profiles": self.policy.list_profiles(),
             "pending_suggestions": self.policy.get_pending_suggestions()
         }
-
-    def get_audit_summary(self, hours: int = 24) -> dict:
-        """Get a summary of audit activity."""
-        return self.audit.get_summary(hours)
-
-    def get_recent_audit_entries(self, count: int = 50, action_filter: list = None) -> list:
-        """Get recent audit log entries."""
-        entries = self.audit.get_recent_entries(count, action_filter)
-        return [entry.to_dict() for entry in entries]
 
 
 # =============================================================================
@@ -1129,49 +1078,8 @@ async def create_ipc_server(agent: SystemAgent, socket_path: str):
         return web.json_response({
             "status": "healthy",
             "active_profile": agent.policy.active_profile,
-            "active_sessions": len(agent.conversations),
-            "events_running": agent.event_manager.running
+            "active_sessions": len(agent.conversations)
         })
-
-    async def handle_events_status(request: web.Request) -> web.Response:
-        return web.json_response(agent.get_event_status())
-
-    async def handle_events_enable(request: web.Request) -> web.Response:
-        data = await request.json()
-        trigger_id = data.get("id")
-        if not trigger_id:
-            return web.json_response({"success": False, "error": "No trigger ID specified"}, status=400)
-
-        if trigger_id not in agent.event_manager.triggers:
-            return web.json_response({"success": False, "error": f"Unknown trigger: {trigger_id}"}, status=404)
-
-        agent.event_manager.triggers[trigger_id].enabled = True
-        return web.json_response({"success": True, "trigger": trigger_id, "enabled": True})
-
-    async def handle_events_disable(request: web.Request) -> web.Response:
-        data = await request.json()
-        trigger_id = data.get("id")
-        if not trigger_id:
-            return web.json_response({"success": False, "error": "No trigger ID specified"}, status=400)
-
-        if trigger_id not in agent.event_manager.triggers:
-            return web.json_response({"success": False, "error": f"Unknown trigger: {trigger_id}"}, status=404)
-
-        agent.event_manager.triggers[trigger_id].enabled = False
-        return web.json_response({"success": True, "trigger": trigger_id, "enabled": False})
-
-    async def handle_audit_summary(request: web.Request) -> web.Response:
-        hours = int(request.query.get("hours", "24"))
-        summary = agent.get_audit_summary(hours)
-        return web.json_response(summary)
-
-    async def handle_audit_entries(request: web.Request) -> web.Response:
-        count = int(request.query.get("count", "50"))
-        action_filter = request.query.get("filter", "").split(",") if request.query.get("filter") else None
-        if action_filter:
-            action_filter = [a.strip() for a in action_filter if a.strip()]
-        entries = agent.get_recent_audit_entries(count, action_filter)
-        return web.json_response({"entries": entries})
 
     app = web.Application()
     app.router.add_post("/chat", handle_chat)
@@ -1180,11 +1088,6 @@ async def create_ipc_server(agent: SystemAgent, socket_path: str):
     app.router.add_post("/policy/check", handle_policy_check)
     app.router.add_get("/policy/suggestions", handle_policy_suggestions)
     app.router.add_get("/health", handle_health)
-    app.router.add_get("/events", handle_events_status)
-    app.router.add_post("/events/trigger/enable", handle_events_enable)
-    app.router.add_post("/events/trigger/disable", handle_events_disable)
-    app.router.add_get("/audit/summary", handle_audit_summary)
-    app.router.add_get("/audit/entries", handle_audit_entries)
 
     if os.path.exists(socket_path):
         os.unlink(socket_path)
@@ -1211,11 +1114,22 @@ async def create_http_server(agent: SystemAgent, host: str = "127.0.0.1", port: 
         data = await request.json()
         session_id = data.get("session_id", "default")
         message = data.get("message", "")
+        confirmations = data.get("confirmations", {})
 
-        async def confirm(action: Action, decision: PolicyDecision) -> bool:
-            return True
+        # Use default confirm callback which checks confirmations dict
+        # and returns None if confirmation is needed
+        result = await agent.process_message(
+            session_id, message, confirmations=confirmations
+        )
+        return web.json_response(result)
 
-        result = await agent.process_message(session_id, message, confirm)
+    async def handle_confirm(request: web.Request) -> web.Response:
+        """Handle confirmation response from user."""
+        data = await request.json()
+        session_id = data.get("session_id", "default")
+        approved = data.get("approved", False)
+
+        result = await agent.resume_after_confirmation(session_id, approved)
         return web.json_response(result)
 
     async def handle_profile_list(request: web.Request) -> web.Response:
@@ -1251,6 +1165,7 @@ async def create_http_server(agent: SystemAgent, host: str = "127.0.0.1", port: 
 
     app = web.Application()
     app.router.add_post("/chat", handle_chat)
+    app.router.add_post("/confirm", handle_confirm)
     app.router.add_get("/profiles", handle_profile_list)
     app.router.add_post("/profiles/set", handle_profile_set)
     app.router.add_post("/policy/check", handle_policy_check)

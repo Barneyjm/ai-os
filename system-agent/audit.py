@@ -394,8 +394,7 @@ class AuditLogger:
         Args:
             hours: Look back this many hours
         """
-        since = datetime.now().replace(microsecond=0)
-        since = since.replace(hour=since.hour - hours) if hours < 24 else None
+        since = datetime.now() - timedelta(hours=hours)
 
         entries = self.get_recent_entries(count=10000, since=since)
 

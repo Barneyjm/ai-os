@@ -1025,7 +1025,7 @@ You have access to these capabilities: filesystem operations, process management
             result = await tool.handler(**tool_args)
             duration_ms = int((time.time() - start) * 1000)
 
-            success = result.get("success", True) if isinstance(result, dict) else True
+            success = result.get("success", False) if isinstance(result, dict) else False
             self.audit.log_tool_completed(session_id, tool_name, result, duration_ms, success)
 
             return result

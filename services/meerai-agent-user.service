@@ -1,0 +1,23 @@
+[Unit]
+Description=MeerAI System Agent (User Mode)
+Documentation=https://github.com/Barneyjm/ai-os
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/meerai/venv/bin/python %h/.local/share/meerai/system-agent/agent.py
+WorkingDirectory=%h/.local/share/meerai
+Environment=PYTHONPATH=%h/.local/share/meerai/system-agent:%h/.local/share/meerai/ai-shell
+Environment=AI_POLICY_CONFIG=%h/.config/meerai/agency.toml
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meerai-agent
+
+[Install]
+WantedBy=default.target

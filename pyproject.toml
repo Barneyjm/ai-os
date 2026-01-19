@@ -1,16 +1,41 @@
 [project]
-name = "ai-os"
+name = "meerai"
 version = "0.1.0"
-description = "An AI-first operating system"
+description = "MeerAI - Your AI that watches while you rest"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
+keywords = ["ai", "automation", "sysadmin", "agent", "devops"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "aiohttp>=3.9.0",
     "prompt_toolkit>=3.0.0",
     "rich>=13.0.0",
     "tomli>=2.0.0;python_version<'3.11'",
+    "watchdog>=3.0.0",
 ]
+
+[project.scripts]
+meerai = "shell:main"
+meerai-agent = "agent:main"
+meerai-shell = "shell:main"
+
+[project.urls]
+Homepage = "https://github.com/Barneyjm/ai-os"
+Documentation = "https://github.com/Barneyjm/ai-os#readme"
+Repository = "https://github.com/Barneyjm/ai-os.git"
+Issues = "https://github.com/Barneyjm/ai-os/issues"
 
 [project.optional-dependencies]
 dev = [

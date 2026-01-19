@@ -333,6 +333,66 @@ class AuditLogger:
                 sanitized[key] = value
         return sanitized
 
+    def _read_lines_from_end(self, max_lines: int, chunk_size: int = 8192) -> list[str]:
+        """
+        Read lines from end of file efficiently.
+
+        Reads file in chunks from the end rather than loading entire file.
+        Returns lines in reverse order (newest first).
+
+        Args:
+            max_lines: Maximum number of lines to return
+            chunk_size: Size of chunks to read (default 8KB)
+        """
+        if not self.log_path.exists():
+            return []
+
+        lines = []
+        file_size = self.log_path.stat().st_size
+
+        if file_size == 0:
+            return []
+
+        with open(self.log_path, "rb") as f:
+            # Start from end of file
+            position = file_size
+            buffer = b""
+
+            while position > 0 and len(lines) < max_lines:
+                # Calculate how much to read
+                read_size = min(chunk_size, position)
+                position -= read_size
+
+                # Seek and read chunk
+                f.seek(position)
+                chunk = f.read(read_size)
+
+                # Prepend to buffer and split into lines
+                buffer = chunk + buffer
+                buffer_lines = buffer.split(b"\n")
+
+                # First element may be partial line, keep in buffer
+                buffer = buffer_lines[0]
+
+                # Add complete lines (in reverse order)
+                for line in reversed(buffer_lines[1:]):
+                    if line.strip():
+                        try:
+                            lines.append(line.decode("utf-8"))
+                        except UnicodeDecodeError:
+                            continue
+                        if len(lines) >= max_lines:
+                            break
+
+            # Don't forget the first line if buffer has content
+            if buffer.strip() and len(lines) < max_lines:
+                try:
+                    lines.append(buffer.decode("utf-8"))
+                except UnicodeDecodeError:
+                    pass
+
+        return lines
+
     def get_recent_entries(
         self,
         count: int = 50,
@@ -342,6 +402,9 @@ class AuditLogger:
     ) -> list[AuditEntry]:
         """
         Get recent audit entries.
+
+        Memory-efficient: reads from end of file in chunks rather than
+        loading entire file into memory.
 
         Args:
             count: Maximum number of entries to return
@@ -355,12 +418,11 @@ class AuditLogger:
         entries = []
 
         try:
-            with open(self.log_path, "r") as f:
-                # Read all lines (could be optimized for large files)
-                lines = f.readlines()
+            # Read file from end in chunks for memory efficiency
+            lines = self._read_lines_from_end(count * 3)  # Read extra for filtering
 
             # Parse from newest to oldest
-            for line in reversed(lines):
+            for line in lines:
                 if len(entries) >= count:
                     break
 

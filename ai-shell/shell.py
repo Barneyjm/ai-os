@@ -342,9 +342,22 @@ async def handle_audit_command(args: list, client: AgentClient):
     subcmd = args[0].lower()
 
     if subcmd == "log" or subcmd == "entries":
-        count = int(args[1]) if len(args) > 1 else 20
+        # Parse arguments: /audit log [count] [--filter=type] [--tool=name]
+        count = 20
+        action_filter = None
+
+        for arg in args[1:]:
+            if arg.startswith("--filter="):
+                action_filter = arg.split("=", 1)[1]
+            elif arg.startswith("--tool="):
+                action_filter = f"tool:{arg.split('=', 1)[1]}"
+            elif arg.startswith("--type="):
+                action_filter = arg.split("=", 1)[1]
+            elif arg.isdigit():
+                count = int(arg)
+
         try:
-            result = await client.get_audit_entries(count)
+            result = await client.get_audit_entries(count, action_filter)
             entries = result.get("entries", [])
 
             if not entries:
@@ -384,9 +397,15 @@ async def handle_audit_command(args: list, client: AgentClient):
 
     elif subcmd == "help":
         console.print("\n[bold]Audit Commands[/bold]")
-        console.print("  [cyan]/audit[/cyan]           Show 24h summary")
-        console.print("  [cyan]/audit log[/cyan]       Show recent entries")
-        console.print("  [cyan]/audit log N[/cyan]     Show N recent entries")
+        console.print("  [cyan]/audit[/cyan]                    Show 24h summary")
+        console.print("  [cyan]/audit log[/cyan]                Show recent entries")
+        console.print("  [cyan]/audit log N[/cyan]              Show N recent entries")
+        console.print("  [cyan]/audit log --type=TYPE[/cyan]    Filter by action type")
+        console.print("  [cyan]/audit log --tool=NAME[/cyan]    Filter by tool name")
+        console.print()
+        console.print("[bold]Action types:[/bold] tool_invoked, tool_completed, tool_failed,")
+        console.print("               policy_check, user_confirmed, user_denied,")
+        console.print("               event_triggered, event_handled")
         console.print()
         console.print("[bold]Log file location:[/bold] ~/.ai-os/audit/audit.jsonl")
         console.print()

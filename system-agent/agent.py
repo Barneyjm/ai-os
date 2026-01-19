@@ -23,6 +23,7 @@ from aiohttp import web, UnixConnector
 from policy import AgencyPolicy, AgencyLevel, Action, PolicyDecision
 from events import EventManager, EventType, Event, EventTrigger, AgentEventHandler
 from audit import get_audit_logger, AuditAction
+from knowledge import get_knowledge
 
 # =============================================================================
 # Configuration
@@ -842,6 +843,9 @@ class SystemAgent:
         if self.policy.active_profile:
             profile_info = f"\nCurrent agency profile: {self.policy.active_profile}"
 
+        # Get situational knowledge (can be customized via ~/.ai-os/knowledge.md)
+        knowledge = get_knowledge(concise=False)
+
         return f"""You are the System Agent for an AI-first operating system. You have direct access to OS primitives through tools.
 
 Your role is to:
@@ -858,7 +862,9 @@ Guidelines:
 - Be proactive - if you notice something relevant while completing a task, mention it
 - If an action is denied by policy, explain what happened and suggest alternatives
 
-You have access to these capabilities: filesystem operations, process management, service control, package management, and system information. Use them freely to help the user.{profile_info}"""
+You have access to these capabilities: filesystem operations, process management, service control, package management, and system information. Use them freely to help the user.{profile_info}
+
+{knowledge}"""
 
     async def process_message(
         self,

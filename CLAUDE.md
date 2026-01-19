@@ -124,6 +124,24 @@ export AI_RUNTIME_URL="http://localhost:8080"
 export AI_MODEL_NAME="llama-3-8b"
 ```
 
+### Custom Knowledge Base
+
+The agent includes built-in sysadmin knowledge (commands, troubleshooting heuristics, safety guidelines). Customize it by creating `~/.ai-os/knowledge.md`:
+
+```bash
+# Copy the example
+cp config/knowledge.md.example ~/.ai-os/knowledge.md
+
+# Or set custom path
+export AI_KNOWLEDGE_PATH="/path/to/my/knowledge.md"
+```
+
+Your custom knowledge file completely replaces the built-in knowledge, so include everything the agent should know about your environment:
+- Server-specific procedures
+- Application deployment steps
+- Known issues and workarounds
+- Escalation contacts
+
 ## Testing Guidelines
 
 ### Running Tests

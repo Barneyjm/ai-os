@@ -391,9 +391,70 @@ class ScheduleParser:
             seconds = parsed["amount"] * units[parsed["unit"]]
             return from_time + timedelta(seconds=seconds)
 
-        # For cron, do simple next-minute calculation for now
-        # A full cron implementation would be more complex
-        return from_time + timedelta(minutes=1)
+        # For cron, calculate next matching time
+        return cls._next_cron_time(parsed, from_time)
+
+    @classmethod
+    def _next_cron_time(cls, parsed: dict, from_time: datetime) -> datetime:
+        """Calculate next time matching cron expression."""
+        # Start from the next minute
+        next_time = from_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+        # Try up to 366 days ahead (covers yearly schedules)
+        for _ in range(366 * 24 * 60):
+            if cls._matches_cron(parsed, next_time):
+                return next_time
+            next_time += timedelta(minutes=1)
+
+        # Fallback if no match found (shouldn't happen with valid cron)
+        return from_time + timedelta(hours=1)
+
+    @classmethod
+    def _matches_cron(cls, parsed: dict, dt: datetime) -> bool:
+        """Check if datetime matches cron expression."""
+        return (
+            cls._matches_field(parsed["minute"], dt.minute, 0, 59) and
+            cls._matches_field(parsed["hour"], dt.hour, 0, 23) and
+            cls._matches_field(parsed["day"], dt.day, 1, 31) and
+            cls._matches_field(parsed["month"], dt.month, 1, 12) and
+            cls._matches_field(parsed["weekday"], dt.weekday(), 0, 6)  # Monday=0
+        )
+
+    @classmethod
+    def _matches_field(cls, field: str, value: int, min_val: int, max_val: int) -> bool:
+        """Check if a value matches a cron field expression."""
+        # Wildcard matches everything
+        if field == "*":
+            return True
+
+        # Handle */n (every n)
+        if field.startswith("*/"):
+            step = int(field[2:])
+            return value % step == 0
+
+        # Handle comma-separated values
+        if "," in field:
+            values = [int(v) for v in field.split(",")]
+            return value in values
+
+        # Handle ranges (e.g., 1-5)
+        if "-" in field:
+            start, end = field.split("-")
+            return int(start) <= value <= int(end)
+
+        # Simple numeric match
+        try:
+            return value == int(field)
+        except ValueError:
+            return False
+
+    @classmethod
+    def get_wait_seconds(cls, schedule: str, from_time: Optional[datetime] = None) -> float:
+        """Calculate seconds until next scheduled run."""
+        from_time = from_time or datetime.now()
+        next_run = cls.get_next_run(schedule, from_time)
+        delta = (next_run - from_time).total_seconds()
+        return max(1, delta)  # At least 1 second
 
 
 class PeripheralMonitor:
@@ -932,15 +993,9 @@ class EventManager:
         """Run a scheduled trigger."""
         while self.running:
             try:
-                # Calculate next run time
-                parsed = ScheduleParser.parse(trigger.schedule)
-
-                if parsed["type"] == "interval":
-                    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-                    wait_seconds = parsed["amount"] * units[parsed["unit"]]
-                else:
-                    # Simple minute-based for cron
-                    wait_seconds = 60
+                # Calculate wait time until next scheduled run
+                wait_seconds = ScheduleParser.get_wait_seconds(trigger.schedule)
+                self.logger.debug(f"Trigger {trigger.id}: waiting {wait_seconds:.0f}s until next run")
 
                 await asyncio.sleep(wait_seconds)
 

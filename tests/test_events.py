@@ -217,6 +217,69 @@ class TestScheduleParser:
         # Allow small delta for execution time
         assert abs((next_run - expected).total_seconds()) < 1
 
+    def test_matches_field_wildcard(self):
+        """Should match wildcard for any value."""
+        assert ScheduleParser._matches_field("*", 0, 0, 59) is True
+        assert ScheduleParser._matches_field("*", 30, 0, 59) is True
+        assert ScheduleParser._matches_field("*", 59, 0, 59) is True
+
+    def test_matches_field_step(self):
+        """Should match step values (*/n)."""
+        assert ScheduleParser._matches_field("*/5", 0, 0, 59) is True
+        assert ScheduleParser._matches_field("*/5", 5, 0, 59) is True
+        assert ScheduleParser._matches_field("*/5", 10, 0, 59) is True
+        assert ScheduleParser._matches_field("*/5", 3, 0, 59) is False
+        assert ScheduleParser._matches_field("*/5", 7, 0, 59) is False
+
+    def test_matches_field_exact(self):
+        """Should match exact values."""
+        assert ScheduleParser._matches_field("30", 30, 0, 59) is True
+        assert ScheduleParser._matches_field("30", 0, 0, 59) is False
+        assert ScheduleParser._matches_field("0", 0, 0, 59) is True
+
+    def test_matches_field_list(self):
+        """Should match comma-separated values."""
+        assert ScheduleParser._matches_field("0,15,30,45", 0, 0, 59) is True
+        assert ScheduleParser._matches_field("0,15,30,45", 15, 0, 59) is True
+        assert ScheduleParser._matches_field("0,15,30,45", 10, 0, 59) is False
+
+    def test_matches_field_range(self):
+        """Should match range values."""
+        assert ScheduleParser._matches_field("9-17", 9, 0, 23) is True
+        assert ScheduleParser._matches_field("9-17", 12, 0, 23) is True
+        assert ScheduleParser._matches_field("9-17", 17, 0, 23) is True
+        assert ScheduleParser._matches_field("9-17", 8, 0, 23) is False
+        assert ScheduleParser._matches_field("9-17", 18, 0, 23) is False
+
+    def test_get_next_run_hourly(self):
+        """Should calculate next run for @hourly (minute 0 each hour)."""
+        # Test from middle of hour
+        now = datetime(2026, 1, 19, 14, 30, 0)
+        next_run = ScheduleParser.get_next_run("@hourly", now)
+        assert next_run.minute == 0
+        assert next_run.hour == 15  # Next hour
+
+    def test_get_next_run_daily(self):
+        """Should calculate next run for @daily (midnight)."""
+        now = datetime(2026, 1, 19, 14, 30, 0)
+        next_run = ScheduleParser.get_next_run("@daily", now)
+        assert next_run.minute == 0
+        assert next_run.hour == 0
+        assert next_run.day == 20  # Next day
+
+    def test_get_next_run_every_5_minutes(self):
+        """Should calculate next run for */5 * * * *."""
+        now = datetime(2026, 1, 19, 14, 32, 0)
+        next_run = ScheduleParser.get_next_run("*/5 * * * *", now)
+        assert next_run.minute == 35  # Next multiple of 5 after 32
+
+    def test_get_wait_seconds(self):
+        """Should calculate correct wait time."""
+        now = datetime(2026, 1, 19, 14, 58, 0)
+        wait = ScheduleParser.get_wait_seconds("@hourly", now)
+        # Should wait until 15:00 = 2 minutes = 120 seconds
+        assert 119 <= wait <= 121
+
 
 class TestAgentEventHandler:
     """Tests for AgentEventHandler."""

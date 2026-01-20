@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures for meetkatOS tests.
+Shared pytest fixtures for MeerkatOS tests.
 """
 
 import os

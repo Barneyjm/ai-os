@@ -1,10 +1,10 @@
-# meetkatOS: An AI-First Operating System
+# MeerkatOS: An AI-First Operating System
 
 An experimental operating system where AI is the primary interface, not an afterthought.
 
 ## Vision
 
-Traditional operating systems bolt AI on top as another app. meetkatOS inverts this: the AI agent is a core system component with deep awareness of and control over the machine. You express intent, the system figures out the rest.
+Traditional operating systems bolt AI on top as another app. MeerkatOS inverts this: the AI agent is a core system component with deep awareness of and control over the machine. You express intent, the system figures out the rest.
 
 ## Features
 
@@ -63,7 +63,7 @@ python ai-shell/shell.py
 ## Project Structure
 
 ```
-meetkatos/
+meerkatos/
 ├── config/agency.toml       # Agency policy configuration
 ├── system-agent/
 │   ├── agent.py             # Core AI agent
@@ -83,4 +83,4 @@ MIT
 
 ## Contributing
 
-This is an experimental project exploring meetkatOS paradigms. Ideas, experiments, and PRs welcome.
+This is an experimental project exploring MeerkatOS paradigms. Ideas, experiments, and PRs welcome.

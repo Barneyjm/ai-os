@@ -11,4 +11,4 @@ done
 clear > $TTY
 
 exec env TERM=linux AI_AGENT_SOCKET="$AGENT_SOCKET" \
-    setsid python3 /usr/lib/meetkatos/ai_shell/shell.py < $TTY > $TTY 2>&1
+    setsid python3 /usr/lib/meerkatos/ai_shell/shell.py < $TTY > $TTY 2>&1

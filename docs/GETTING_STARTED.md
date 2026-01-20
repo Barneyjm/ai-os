@@ -1,4 +1,4 @@
-# Getting Started with meetkatOS
+# Getting Started with MeerkatOS
 
 ## Quick Development Setup
 

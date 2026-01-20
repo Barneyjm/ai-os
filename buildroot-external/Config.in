@@ -1,4 +1,4 @@
-menu "meetkatOS Packages"
+menu "MeerkatOS Packages"
 
 config BR2_PACKAGE_SYSTEM_AGENT
     bool "system-agent"

@@ -1,4 +1,4 @@
-# meetkatOS Architecture
+# MeerkatOS Architecture
 
 ## Layer Diagram
 

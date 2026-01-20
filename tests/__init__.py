@@ -1,1 +1,1 @@
-# meetkatOS Test Suite
+# MeerkatOS Test Suite

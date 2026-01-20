@@ -8,5 +8,5 @@ while [ ! -S "$RUNTIME_SOCKET" ]; do
 done
 
 echo "Starting System Agent…"
-cd /usr/lib/meetkatos
+cd /usr/lib/meerkatos
 exec python3 -m system_agent.agent

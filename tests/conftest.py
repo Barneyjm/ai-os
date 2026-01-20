@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures for AI-OS tests.
+Shared pytest fixtures for meetkatOS tests.
 """
 
 import os

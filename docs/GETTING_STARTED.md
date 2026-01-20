@@ -1,4 +1,4 @@
-# Getting Started with AI-OS
+# Getting Started with meetkatOS
 
 ## Quick Development Setup
 

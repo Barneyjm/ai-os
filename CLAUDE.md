@@ -1,15 +1,15 @@
-# AI-OS Development Guide
+# meetkatOS Development Guide
 
 This file helps Claude (and other AI assistants) understand the project structure and contribute effectively.
 
 ## Project Overview
 
-AI-OS is an AI-first operating system where AI is the primary interface. The system agent has direct access to OS primitives through tools, with user-configurable autonomy levels.
+meetkatOS is an AI-first operating system where AI is the primary interface. The system agent has direct access to OS primitives through tools, with user-configurable autonomy levels.
 
 ## Directory Structure
 
 ```
-ai-os/
+meetkatos/
 ├── system-agent/           # Core AI agent
 │   ├── agent.py            # Main agent, tools, inference clients
 │   ├── policy.py           # Agency policy system

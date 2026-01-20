@@ -1,5 +1,5 @@
 """
-AI-OS Agency Policy System
+meetkatOS Agency Policy System
 
 Manages the autonomy level of the AI agent across different domains.
 Supports user-defined policies, profiles, and adaptive learning.
@@ -77,8 +77,8 @@ class AgencyPolicy:
     """
 
     DEFAULT_CONFIG_PATHS = [
-        Path("/etc/ai-os/agency.toml"),
-        Path.home() / ".config/ai-os/agency.toml",
+        Path("/etc/meetkatos/agency.toml"),
+        Path.home() / ".config/meetkatos/agency.toml",
         Path("config/agency.toml"),  # Local development
     ]
 
@@ -343,7 +343,7 @@ def main():
     """CLI for viewing and managing agency policy."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="AI-OS Agency Policy Manager")
+    parser = argparse.ArgumentParser(description="meetkatOS Agency Policy Manager")
     subparsers = parser.add_subparsers(dest="command")
 
     # Show current policy

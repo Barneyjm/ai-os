@@ -1,1 +1,1 @@
-# AI-OS Test Suite
+# meetkatOS Test Suite

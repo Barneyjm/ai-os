@@ -1,4 +1,4 @@
-menu "AI-OS Packages"
+menu "meetkatOS Packages"
 
 config BR2_PACKAGE_SYSTEM_AGENT
     bool "system-agent"

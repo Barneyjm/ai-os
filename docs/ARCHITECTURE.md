@@ -1,4 +1,4 @@
-# AI-OS Architecture
+# meetkatOS Architecture
 
 ## Layer Diagram
 

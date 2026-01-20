@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI-OS System Agent
+meetkatOS System Agent
 
 The core agent that mediates between user intent and OS primitives.
 This is the "brain" of the AI-first operating system.

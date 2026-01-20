@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Shell - The primary user interface for AI-OS
+AI Shell - The primary user interface for meetkatOS
 
 A conversational terminal interface that connects to the system agent.
 """
@@ -222,7 +222,7 @@ async def handle_policy_check(args: list, client: AgentClient):
 
 def print_welcome():
     console.print(Panel.fit(
-        "[bold green]AI-OS Shell[/bold green]\n"
+        "[bold green]meetkatOS Shell[/bold green]\n"
         "[dim]Type naturally to interact with your system.[/dim]\n"
         "[dim]Type /help for commands.[/dim]",
         border_style="green"
